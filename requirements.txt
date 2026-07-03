@@ -1,0 +1,14 @@
+# Runtime dependencies for the hybrid memory pipeline scripts.
+# The plugin itself (plugins/hybrid/) additionally expects to be loaded inside a
+# hermes-agent checkout, which supplies the holographic base provider and its
+# HRR math. See README "Status" for what that coupling means.
+
+sqlite-vec>=0.1.1     # unified vector index (virtual table, cosine, 384-dim)
+networkx>=3.0         # in-memory knowledge graph (load-on-demand DiGraph)
+numpy>=1.24           # HRR phase-vector math for the analogy slot
+PyYAML>=6.0           # config.yaml parsing
+chromadb>=0.4         # ONLY for its bundled ONNX all-MiniLM-L6-v2 embedder;
+                      # the ChromaDB store itself is not used
+
+# Dev / test only:
+#   pytest>=7.0
