@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Plugin for hermes-agent](https://img.shields.io/badge/plugin%20for-hermes--agent-6f42c1.svg)](https://github.com/NousResearch/hermes-agent)
-[![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen.svg)](scripts/tests/)
+[![tests](https://github.com/sheldon904/hermes-hybrid-memory/actions/workflows/tests.yml/badge.svg)](https://github.com/sheldon904/hermes-hybrid-memory/actions/workflows/tests.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 > Facts + semantic vectors + a knowledge graph in **one SQLite file**, maintained
