@@ -10,6 +10,13 @@
 > incrementally as a side effect of normal memory writes — plus a Hofstadter-inspired
 > analogy slot, emergent chunking, and usage-driven (never age-driven) forgetting.
 
+[![The memory graph rendered by brain_viz.py](docs/img/brain_graph.png)](docs/EXAMPLE-SNAPSHOT.md)
+
+<sub>The memory isn't a black box: `brain_viz.py` snapshots the whole store into a
+self-contained interactive explorer — search, click any entity to see its links and
+what the agent knows about it, filter by type, hide the prospect leaves. *(Shown on
+synthetic demo data — [browse the full snapshot](docs/EXAMPLE-SNAPSHOT.md), Mermaid map included.)*</sub>
+
 A custom `MemoryProvider` plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 (MIT-licensed, NousResearch) that replaces "stuff some text in the system prompt"
 memory with a unified store combining **structured facts**, **semantic vector
