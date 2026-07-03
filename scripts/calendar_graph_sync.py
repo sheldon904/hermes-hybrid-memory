@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""calendar_graph_sync.py — mirror upcoming calendar events into the knowledge graph.
+"""calendar_graph_sync.py, mirror upcoming calendar events into the knowledge graph.
 
 Each event on the personal Google Calendar (the single source of truth)
 becomes a first-class graph EPISODE: a node of type 'event' carrying
@@ -48,7 +48,7 @@ def event_node_name(ev: dict) -> str:
 def is_stale(attrs: dict, fetched: dict, node_name: str, today: str) -> bool:
     """A calendar node is stale when its event vanished from the window or was
     renamed (same eventId now maps to a different node name). Only FUTURE
-    events are pruned — past episodes stay as history."""
+    events are pruned, past episodes stay as history."""
     if (attrs or {}).get("cal") != "personal":
         return False
     start = str(attrs.get("start") or "")[:10]

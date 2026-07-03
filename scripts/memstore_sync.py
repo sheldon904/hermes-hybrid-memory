@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""memstore_sync.py — incremental vectorization into the unified store.
+"""memstore_sync.py, incremental vectorization into the unified store.
 
 Vectorizes any fact / memory entry not yet present in sqlite-vec, and prunes
 vectors whose source was deleted. Only NEW items get embedded, so this is cheap.
 
 Replaces the old memory_import.py (ChromaDB) and the 30-min build_kg rebuild:
-  • vectors  — maintained here, incrementally
-  • graph    — written incrementally at ingest time (memory_ingest / world_model_import)
-  • facts    — owned by the holographic provider
+  - vectors: maintained here, incrementally
+  - graph: written incrementally at ingest time (memory_ingest / world_model_import)
+  - facts: owned by the holographic provider
 
 Sources covered: holographic facts (memory_store.db), MEMORY.md, USER.md,
 fact_store.json (job applications + metrics).
@@ -53,8 +53,8 @@ def _sections(path):
 
 def extract_edges_for_new_facts(con, batch=25):
     """Mine graph edges from facts not yet processed (incremental). This is what
-    makes the graph auto-grow from EVERYTHING Hermes learns — chat, fact_store,
-    session-end auto-extraction — not just ingested email/calls. Append-only and
+    makes the graph auto-grow from EVERYTHING Hermes learns, chat, fact_store,
+    session-end auto-extraction, not just ingested email/calls. Append-only and
     idempotent; only NEW facts hit the LLM."""
     rows = con.execute(
         "SELECT fact_id, content FROM facts WHERE fact_id NOT IN "
@@ -102,7 +102,7 @@ def extract_gists_for_new_facts(con, batch=25):
         listing = "\n".join(f'{fid}: {c[:300]}' for fid, c, _ in todo)
         system = (
             "For each numbered fact, output one JSONL line: "
-            '{"id": <number>, "gist": "..."} — the gist is ONE short line stating what '
+            '{"id": <number>, "gist": "..."}, the gist is ONE short line stating what '
             "the fact is an instance of, abstracted away from its specifics (names, "
             "dates, amounts). Example: 'Jordan's birthday is March 3' -> "
             "'a close person's recurring important date'. Output nothing else."

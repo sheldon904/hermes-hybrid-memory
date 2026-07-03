@@ -1,5 +1,5 @@
 name: hybrid
 version: 1.0.0
-description: "Hybrid memory — holographic facts + semantic vector recall (sqlite-vec) + knowledge-graph relations, with per-turn auto-injection and instant sync."
+description: "Hybrid memory, holographic facts + semantic vector recall (sqlite-vec) + knowledge-graph relations, with per-turn auto-injection and instant sync."
 author: sheldon904
 memory_provider: true

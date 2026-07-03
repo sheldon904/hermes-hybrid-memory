@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""memory_abstract.py — weekly abstraction pass over the fact store + graph.
+"""memory_abstract.py, weekly abstraction pass over the fact store + graph.
 
 Two Hofstadter mechanisms, both reversible and never destructive:
 
 1. CHUNKING (concepts glom into larger units, internals stay recoverable):
    Clusters of related facts (union-find over shared entities) get summarized
    by flash-lite into ONE chunk fact (category='chunk') plus chunk_members
-   rows and a graph 'episode' node. Members are NEVER deleted — the hybrid
+   rows and a graph 'episode' node. Members are NEVER deleted, the hybrid
    provider suppresses member lines when their chunk surfaces, and
    chunk_expand unpacks them on demand. Operational (email/lead) facts are
    INCLUDED: a chunk summarizing lead exhaust is how quarantined detail
@@ -24,7 +24,7 @@ facts, every member >= 7 days old, no member already chunked. LLM failures
 skip the cluster (retry next week).
 
 Usage:
-  memory_abstract.py            # DRY RUN — report clusters/groups only
+  memory_abstract.py            # DRY RUN, report clusters/groups only
   memory_abstract.py --apply    # write chunks + proposals
 """
 
@@ -274,7 +274,7 @@ def name_category(node_type, members, rels):
     out = _llm_json(
         "You name an emergent category. Given member entities (all the same type) "
         "and the relationship kinds they share, output ONE JSON object: "
-        '{"label": "..."} — a short lowercase category label (<= 40 chars) that '
+        '{"label": "..."}, a short lowercase category label (<= 40 chars) that '
         "captures what the members have in common. No punctuation except spaces/hyphens.",
         f"TYPE: {node_type}\nMEMBERS: {', '.join(members[:12])}\n"
         f"SHARED RELATIONS: {', '.join(rels) or '(none)'}")
@@ -353,7 +353,7 @@ def main():
     if apply:
         print(f"applied: {wrote_chunks} chunks, {wrote_groups} category proposals")
     else:
-        print("\nDRY RUN — nothing written. Re-run with --apply.")
+        print("\nDRY RUN, nothing written. Re-run with --apply.")
 
     if store:
         store.close()

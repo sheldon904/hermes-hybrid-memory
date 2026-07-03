@@ -12,7 +12,7 @@ index 4c764bd13..3183ff259 100644
 +            # agents should be able to read/write persistent memory (hybrid
 +            # provider + MEMORY.md), so it's opt-in via
 +            # `cron: memory_enabled: true` in config.yaml instead of always off.
-+            # A hermes update reverts this file — reapply if cron runs start
++            # A hermes update reverts this file, reapply if cron runs start
 +            # logging "Memory is not available".
 +            skip_memory=not bool((_cfg.get("cron") or {}).get("memory_enabled", False)),
              platform="cron",

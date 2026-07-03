@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""memory_consolidate.py — quality-based consolidation of the holographic fact store.
+"""memory_consolidate.py, quality-based consolidation of the holographic fact store.
 
 DESIGN GUARANTEE: this NEVER prunes by age. A fact's created_at is not an input.
-Older legitimate memories are never removed and their recall never degrades — in
+Older legitimate memories are never removed and their recall never degrades, in
 fact recall improves, because removing duplicate/noise entries raises the signal
 in both the vector index and the knowledge graph.
 
@@ -15,14 +15,14 @@ is never touched):
      useful. A fact is archived only if it matches an explicit transcript marker
      AND is not protected.
 
-PROTECTED — never archived, regardless of age:
-  • retrieval_count > 0   (the agent has recalled it)
-  • helpful_count  > 0    (rated helpful)
-  • trust_score  > default (boosted above the default — curated/reinforced)
+PROTECTED, never archived, regardless of age:
+  - retrieval_count > 0   (the agent has recalled it)
+  - helpful_count  > 0    (rated helpful)
+  - trust_score  > default (boosted above the default, curated/reinforced)
 Safety for the junk path rests on the deliberately NARROW transcript markers: a
 fact is only "junk" if it is an explicit raw call-transcript dump, whose useful
 content was already extracted into separate clean facts. The DURABLE pattern is
-kept as a guard for any future, broader junk heuristics — it is intentionally
+kept as a guard for any future, broader junk heuristics, it is intentionally
 NOT applied to raw transcripts (which almost always contain an incidental number).
 
 Removals are ARCHIVED to ~/.hermes/memory_archive.jsonl first (append-only,
@@ -31,7 +31,7 @@ backup keeps a copy too). The 15m memory-ingest cron (memstore_sync) then prunes
 from the vector index automatically.
 
 Usage:
-  memory_consolidate.py            # DRY RUN — report only, change nothing
+  memory_consolidate.py            # DRY RUN, report only, change nothing
   memory_consolidate.py --apply    # archive + remove the candidates
 """
 
@@ -106,7 +106,7 @@ def norm(t: str) -> str:
 def main():
     apply = "--apply" in sys.argv
     if not DB.exists():
-        print("no memory_store.db — nothing to do")
+        print("no memory_store.db, nothing to do")
         return
 
     con = sqlite3.connect(str(DB), timeout=30)
@@ -120,7 +120,7 @@ def main():
 
     to_archive = {}  # fact_id -> reason
 
-    # 1) Lossless dedup — identical content collapses to the best (oldest on ties).
+    # 1) Lossless dedup, identical content collapses to the best (oldest on ties).
     groups = {}
     for r in rows:
         k = norm(r["content"])
@@ -139,7 +139,7 @@ def main():
             if r["fact_id"] != keeper["fact_id"]:
                 to_archive[r["fact_id"]] = "duplicate"
 
-    # 2) Junk archival — explicit transcript noise that is NOT protected.
+    # 2) Junk archival, explicit transcript noise that is NOT protected.
     for r in rows:
         if r["fact_id"] in to_archive:
             continue
@@ -158,7 +158,7 @@ def main():
         print(f"    #{fid} [{reason}] {(rowmap[fid]['content'] or '')[:60]!r}")
 
     if not apply:
-        print("\nDRY RUN — nothing changed. Re-run with --apply to archive.")
+        print("\nDRY RUN, nothing changed. Re-run with --apply to archive.")
         return
     if not to_archive:
         print("nothing to archive.")

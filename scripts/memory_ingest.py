@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""memory_ingest.py — distill a document (email, call transcript, note) into memory.
+"""memory_ingest.py, distill a document (email, call transcript, note) into memory.
 
 Pipeline role: documents IN -> SALIENT facts -> holographic store (memory_store.db).
 The existing crons then propagate automatically:
@@ -7,7 +7,7 @@ The existing crons then propagate automatically:
   memstore graph   -> knowledge_graph tables (legacy/build_kg.py retired)
 
 Raw text is NEVER stored as a fact (that is exactly the noise the consolidation
-pass strips). Only distilled, durable facts are kept — so the graph and vector
+pass strips). Only distilled, durable facts are kept, so the graph and vector
 index enrich themselves from your inbox and calls without manual entry.
 
 Idempotent: an ingest ledger (~/.hermes/ingest/ledger.json) records processed
@@ -75,7 +75,7 @@ def extract(text: str, source: str, meta: dict) -> dict:
         return empty
     ctx = ", ".join(f"{k}={v}" for k, v in (meta or {}).items() if v)
     system = (
-        "You distill a document into memory. Output JSONL — one compact JSON object per "
+        "You distill a document into memory. Output JSONL, one compact JSON object per "
         "line, nothing else (no prose, no markdown). Emit three kinds of line:\n"
         '{"fact":"..."}  a durable, self-contained third-person statement worth '
         "remembering; name its subject so it stands alone (e.g. \"Acme Corp's "
@@ -143,7 +143,7 @@ def extract(text: str, source: str, meta: dict) -> dict:
 def _append_overlay(nodes: list, edges: list) -> None:
     """Write canonicalized nodes/edges straight into the unified store (memstore).
     Same-entity variants collapse to one node via entity_resolve; the graph is
-    maintained incrementally — no overlay JSON, no periodic rebuild."""
+    maintained incrementally, no overlay JSON, no periodic rebuild."""
     try:
         import memstore as _ms
         from entity_resolve import Resolver, normalize_relation as _nr

@@ -24,7 +24,7 @@ jobs:
 
       # The plugin subclasses hermes-agent's MemoryProvider base class, so two
       # of the eight test files need it importable. Only the `agent/` package
-      # (a pure-stdlib ABC) is required — grab just that via a sparse, blobless
+      # (a pure-stdlib ABC) is required, grab just that via a sparse, blobless
       # clone instead of pulling the whole upstream repo. This also doubles as
       # an upstream smoke test: if the base class ever changes shape, CI catches
       # it (see scripts/tests/conftest.py).
@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Minimal runtime deps — chromadb (embedder) is intentionally omitted:
+          # Minimal runtime deps, chromadb (embedder) is intentionally omitted:
           # the suite uses throwaway SQLite fixtures and never calls the model.
           pip install sqlite-vec networkx numpy PyYAML pytest
 

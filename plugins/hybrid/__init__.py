@@ -1,21 +1,21 @@
-"""hybrid — holographic facts + semantic vector recall + knowledge-graph memory.
+"""hybrid: holographic facts + semantic vector recall + knowledge-graph memory.
 
 A MemoryProvider that SUBCLASSES the bundled holographic provider, so it keeps
 every holographic behavior (fact_store/fact_feedback tools, entity resolution,
 trust scoring, auto-extraction at session end) and ADDS on top:
 
-  • recall            — vector (semantic) search over all memory (sqlite-vec)
-  • graph_query/...   — relationship tools over the knowledge graph
-  • prefetch()        — auto-injects FTS + vector + graph context every turn,
-                        char-capped, with retrieval counting and recall logging
-  • analogy slot      — one structure-similar / surface-different memory per
-                        turn (HRR vs MiniLM disagreement), Hofstadter-style
-  • situation match   — situation/playbook nodes matched against the rolling
-                        conversation window
-  • chunk awareness   — chunk facts suppress their members in prefetch;
-                        chunk_expand unpacks them
-  • analogize tool    — relational-fingerprint analogy search over the graph
-  • on_memory_write() — instant vector upsert when the memory tool writes
+  - recall: vector (semantic) search over all memory (sqlite-vec)
+  - graph_query and friends: relationship tools over the knowledge graph
+  - prefetch(): auto-injects FTS + vector + graph context every turn,
+    char-capped, with retrieval counting and recall logging
+  - analogy slot: one structure-similar, surface-different memory per turn
+    (HRR vs MiniLM disagreement), Hofstadter-style
+  - situation match: situation/playbook nodes matched against the rolling
+    conversation window
+  - chunk awareness: chunk facts suppress their members in prefetch;
+    chunk_expand unpacks them
+  - analogize tool: relational-fingerprint analogy search over the graph
+  - on_memory_write(): instant vector upsert when the memory tool writes
 
 Config in $HERMES_HOME/config.yaml:
     plugins:
@@ -65,7 +65,7 @@ except Exception as e:  # pragma: no cover
     _HOLO = False
     logger.warning("hybrid: holographic base unavailable (%s); vector+graph only", e)
 
-# HRR math (phase vectors) from the bundled plugin — used for the analogy slot.
+# HRR math (phase vectors) from the bundled plugin, used for the analogy slot.
 try:
     from plugins.memory.holographic import holographic as _hrrmod
     import numpy as _np
@@ -277,7 +277,7 @@ def _cap_blocks(blocks: List[str], cap: int) -> Tuple[str, Set[str]]:
 RECALL_SCHEMA = {
     "name": "recall",
     "description": (
-        "Semantic (vector) search over EVERYTHING Hermes remembers — agent notes, "
+        "Semantic (vector) search over EVERYTHING Hermes remembers, agent notes, "
         "the user profile, stored facts, job applications. Use this for fuzzy or "
         "conceptual recall when you don't have exact keywords (it finds by meaning). "
         "Complements fact_store (keyword/entity) and graph_query (relationships). "
@@ -318,7 +318,7 @@ GRAPH_QUERY_SCHEMA = {
 GRAPH_PATH_SCHEMA = {
     "name": "graph_path",
     "description": (
-        "Find how two entities are connected in the memory knowledge graph — the shortest "
+        "Find how two entities are connected in the memory knowledge graph, the shortest "
         "chain of relationships between them (multi-hop). Use for 'how is X connected to Y', "
         "'what links A and B', warm-intro / connection questions."
     ),
@@ -336,7 +336,7 @@ GRAPH_PATH_SCHEMA = {
 GRAPH_CONNECTIONS_SCHEMA = {
     "name": "graph_connections",
     "description": (
-        "Given several entities, show how they relate across the graph — pairwise connection "
+        "Given several entities, show how they relate across the graph, pairwise connection "
         "paths and any shared neighbors (common city, industry, contact, project). Use for "
         "'how do these relate', 'what do these prospects have in common', clustering questions."
     ),
@@ -356,7 +356,7 @@ GRAPH_REASON_SCHEMA = {
         "Reason over a focused region of the knowledge graph to answer a relational / multi-hop "
         "question (e.g. 'which prospects look most like our best client', 'how is this company "
         "positioned relative to X'). Pulls the relevant subgraph and analyses it. Heavier than "
-        "graph_query — use when the answer needs inference across multiple relationships."
+        "graph_query, use when the answer needs inference across multiple relationships."
     ),
     "parameters": {
         "type": "object",
@@ -388,7 +388,7 @@ CHUNK_EXPAND_SCHEMA = {
 SITUATION_STORE_SCHEMA = {
     "name": "situation_store",
     "description": (
-        "Manage situation-pattern memories — named recurring situations with a playbook "
+        "Manage situation-pattern memories, named recurring situations with a playbook "
         "(e.g. 'vendor ghosting after verbal yes'). When a conversation resembles a stored "
         "situation, its playbook is auto-injected. Use 'add' when you and the user recognize "
         "a recurring pattern worth naming."
@@ -410,7 +410,7 @@ ANALOGIZE_SCHEMA = {
     "name": "analogize",
     "description": (
         "Find entities whose RELATIONAL STRUCTURE in the knowledge graph resembles a given "
-        "entity (or a described situation), while being surface-different — Hofstadter-style "
+        "entity (or a described situation), while being surface-different, Hofstadter-style "
         "analogy search. Use for 'which prospects are shaped like our best client', "
         "'what past situation does this resemble'. Set explain=true for an LLM mapping "
         "explanation."
@@ -929,7 +929,7 @@ class HybridMemoryProvider(_Base):
             "a subgraph), `chunk_expand` (unpack a summarized chunk memory), "
             "`situation_store` (name a recurring situation + playbook), `analogize` "
             "(find structurally similar entities/situations).\n"
-            "An auto-injected '## Analogy candidate' line is a speculative reminding — "
+            "An auto-injected '## Analogy candidate' line is a speculative reminding, "
             "structurally similar to the current situation but surface-different. Treat it "
             "as a hint, not a fact about the current topic. When an injected memory proves "
             "genuinely useful or wrong, rate it with fact_feedback (trains recall)."
@@ -969,7 +969,7 @@ class HybridMemoryProvider(_Base):
                 if len(fts_lines) >= 5:
                     break
         elif _HOLO:
-            # Degraded mode: base internals moved — fall back to the bundled
+            # Degraded mode: base internals moved, fall back to the bundled
             # text-only prefetch (no counting, no filtering).
             try:
                 fts = super().prefetch(query, session_id=session_id)
@@ -991,7 +991,7 @@ class HybridMemoryProvider(_Base):
                 logger.debug("hybrid: query embed failed (%s)", e)
 
         # 2) semantic vector recall (deduped against FTS so facts don't repeat).
-        # Situations are excluded here — they surface via the dedicated block
+        # Situations are excluded here, they surface via the dedicated block
         # below, which carries the playbook instead of the raw description.
         vlines, seen = [], set()
         vec_entries: List[Dict[str, Any]] = []
@@ -1042,7 +1042,7 @@ class HybridMemoryProvider(_Base):
         # 3) graph neighborhood for entities named in the query (alias-aware)
         graph_block = self._graph_context(query or rolling_query)
 
-        # 4) analogy slot — structure-similar, surface-different (max 1 line)
+        # 4) analogy slot, structure-similar, surface-different (max 1 line)
         analogy_block = ""
         try:
             cand = self._analogy_candidate(
@@ -1481,8 +1481,8 @@ class HybridMemoryProvider(_Base):
         import urllib.request
         system = (
             "You are a reasoning engine over a knowledge graph. You are given relationship "
-            "triples ('subject RELATION object') and a question. Reason over them — including "
-            "multi-hop chains — and answer concisely and concretely, citing the relationship "
+            "triples ('subject RELATION object') and a question. Reason over them, including "
+            "multi-hop chains, and answer concisely and concretely, citing the relationship "
             "path(s) you used. If the graph doesn't support an answer, say so plainly."
         )
         payload = json.dumps({

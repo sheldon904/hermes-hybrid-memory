@@ -7,7 +7,7 @@ a few things about how to contribute are worth stating up front.
 ## Ground rules
 
 - **Keep the degrade-gracefully invariant.** Every layer (vector, graph, HRR,
-  the holographic base) is optional at runtime — if one is missing the provider
+  the holographic base) is optional at runtime; if one is missing the provider
   falls back to whatever still works. New code should preserve that; don't make
   a hard dependency on a layer that today is best-effort.
 - **Never delete memory to save space.** Chunking, consolidation, and feedback
@@ -26,7 +26,7 @@ PYTHONPATH=scripts:<path-to-a-hermes-agent-checkout> \
 ```
 
 Two of the eight test files import `plugins/hybrid/__init__.py`, which imports
-the upstream holographic base class — that's why a `hermes-agent` checkout is on
+the upstream holographic base class; that's why a `hermes-agent` checkout is on
 `PYTHONPATH`. The other six run against `scripts/` alone. See
 [`docs/ARCHITECTURE.md#testing`](docs/ARCHITECTURE.md#testing).
 
@@ -34,7 +34,7 @@ the upstream holographic base class — that's why a `hermes-agent` checkout is 
 
 - Run the test suite and keep it green.
 - If you touch prefetch, ingest, or the analogy/chunking mechanics, update
-  `docs/ARCHITECTURE.md` in the same PR — the docs are the spec here.
+  `docs/ARCHITECTURE.md` in the same PR; the docs are the spec here.
 - Open an issue first for anything that changes the storage schema or the
   plugin contract with hermes-agent.
 

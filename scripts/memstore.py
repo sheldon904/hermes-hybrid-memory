@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""memstore.py — the unified Hermes memory store (one SQLite database).
+"""memstore.py, the unified Hermes memory store (one SQLite database).
 
 Collapses what used to be three stores into memory_store.db:
-  • facts + FTS5 + trust  — owned by the holographic provider (untouched here)
-  • vectors               — sqlite-vec (cosine), this module
-  • graph (edges/nodes)   — plain tables, this module, written incrementally
+  - facts + FTS5 + trust, owned by the holographic provider (untouched here)
+  - vectors: sqlite-vec (cosine), this module
+  - graph (edges/nodes), plain tables, this module, written incrementally
 
 All additive: these tables do not collide with holographic's (facts/entities/
 fact_entities/FTS). Writes are incremental and transactional; there is no
 periodic full rebuild. networkx is loaded from the edges table on demand for
 path/reason queries.
 
-Embedder: ChromaDB's ONNX all-MiniLM-L6-v2 function (the model only — the
+Embedder: ChromaDB's ONNX all-MiniLM-L6-v2 function (the model only, the
 ChromaDB *store* is retired). 384-dim.
 """
 

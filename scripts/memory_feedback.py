@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""memory_feedback.py — nightly usage-based trust adjustment (heuristic v1).
+"""memory_feedback.py, nightly usage-based trust adjustment (heuristic v1).
 
 Closes the feedback loop the fact store was designed around: facts that get
 surfaced AND engaged with gain trust; facts that keep getting surfaced but
 never matter lose a little. Signals come entirely from recall_log (written by
-the hybrid provider) — no session-DB parsing, no LLM, no embedder.
+the hybrid provider), no session-DB parsing, no LLM, no embedder.
 
 Engagement heuristic: a surfaced fact is "engaged" if any LATER query in the
 same session (a) mentions one of the fact's linked entities (name length >= 4),
@@ -15,7 +15,7 @@ proxy for "that memory mattered".
 Deltas (bounded, auditable, reversible via trust_log):
   +0.02 per run for facts engaged in the last --pos-days (ceiling 0.85)
   -0.02 for facts surfaced on >= 5 distinct turns in the last 14 days with
-        ZERO engagement anywhere in that window (floor 0.35 — deliberately
+        ZERO engagement anywhere in that window (floor 0.35, deliberately
         above min_trust_threshold 0.3, so demoted facts never vanish from
         recall; they just rank lower)
 
@@ -23,7 +23,7 @@ Every change is recorded in trust_log(old_trust, new_trust, reason). Rows in
 recall_log older than 60 days are pruned (with --apply).
 
 Usage:
-  memory_feedback.py             # DRY RUN — report only
+  memory_feedback.py             # DRY RUN, report only
   memory_feedback.py --apply     # write trust changes + prune recall_log
   memory_feedback.py --llm       # reserved for LLM-judged engagement (v2)
 """
@@ -177,7 +177,7 @@ def main():
     if "--llm" in sys.argv:
         print("[note] --llm engagement judging is reserved for v2; running heuristic")
     if not DB.exists():
-        print("no memory_store.db — nothing to do")
+        print("no memory_store.db, nothing to do")
         return
 
     con = sqlite3.connect(str(DB), timeout=30)
@@ -202,7 +202,7 @@ def main():
     if apply:
         print(f"applied: +{n_pos} boosts, {n_neg} demotions | pruned {pruned} old recall_log rows")
     else:
-        print(f"\nDRY RUN — nothing changed ({n_pos} boosts, {n_neg} demotions pending). "
+        print(f"\nDRY RUN, nothing changed ({n_pos} boosts, {n_neg} demotions pending). "
               "Re-run with --apply to write.")
     con.close()
 

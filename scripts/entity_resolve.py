@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""entity_resolve.py — write-time entity canonicalization for the memory graph.
+"""entity_resolve.py, write-time entity canonicalization for the memory graph.
 
 Collapses name variants / shared domains / shared contact info to ONE canonical
 entity, so the same company or person seen via email, calls, agency leads, and
-curated memory resolves to a single graph node — while keeping genuinely distinct
+curated memory resolves to a single graph node, while keeping genuinely distinct
 siblings (e.g. "Acme Labs" vs "Acme Digital") separate.
 
 Stdlib-only (difflib for the optional fuzzy gate). Persistent index at
-~/.hermes/knowledge_graph/entity_index.json (reversible — delete to reset).
+~/.hermes/knowledge_graph/entity_index.json (reversible, delete to reset).
 
 Used at WRITE time by memory_ingest._append_overlay and build_kg._merge_overlay.
 The live hybrid provider resolves by exact match at READ time, so baking canonical
@@ -221,7 +221,7 @@ def canonical(name, **kw) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Relation ontology — collapse ad-hoc LLM predicates to a controlled vocabulary
+# Relation ontology, collapse ad-hoc LLM predicates to a controlled vocabulary
 # so multi-hop paths are consistent and queryable. Unknown relations pass
 # through (cleaned), so the vocabulary grows without rejecting novel edges.
 # ---------------------------------------------------------------------------

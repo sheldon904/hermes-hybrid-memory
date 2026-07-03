@@ -1,4 +1,4 @@
-# Hybrid Memory — a graph + vector + holographic memory layer for agents
+# Hybrid Memory: a graph + vector + holographic memory layer for agents
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
@@ -7,25 +7,25 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 > Facts + semantic vectors + a knowledge graph in **one SQLite file**, maintained
-> incrementally as a side effect of normal memory writes — plus a Hofstadter-inspired
+> incrementally as a side effect of normal memory writes, plus a Hofstadter-inspired
 > analogy slot, emergent chunking, and usage-driven (never age-driven) forgetting.
 
 [![The memory graph rendered by brain_viz.py](docs/img/brain_graph.png)](docs/EXAMPLE-SNAPSHOT.md)
 
 <sub>The memory isn't a black box: `brain_viz.py` snapshots the whole store into a
-self-contained interactive explorer — search, click any entity to see its links and
-what the agent knows about it, filter by type, hide the prospect leaves. *(Shown on
-synthetic demo data — [browse the full snapshot](docs/EXAMPLE-SNAPSHOT.md), Mermaid map included.)*</sub>
+self-contained interactive explorer, where you can search, click any entity to see its links and
+what the agent knows about it, filter by type, and hide the prospect leaves. *(Shown on
+synthetic demo data; [browse the full snapshot](docs/EXAMPLE-SNAPSHOT.md), Mermaid map included.)*</sub>
 
 A custom `MemoryProvider` plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 (MIT-licensed, NousResearch) that replaces "stuff some text in the system prompt"
 memory with a unified store combining **structured facts**, **semantic vector
-recall**, and a **knowledge graph** — plus a set of Hofstadter-inspired
+recall**, and a **knowledge graph**, plus a set of Hofstadter-inspired
 mechanisms (analogy-making, chunking, emergent categories) layered on top.
 
 This repo is a staged extraction of a system that has been running in
 production against a real personal/work agent for several weeks. Some paths
-still assume the `$HERMES_HOME` layout it grew up in — see [Status](#status)
+still assume the `$HERMES_HOME` layout it grew up in; see [Status](#status)
 below for what that means if you want to run it elsewhere.
 
 ## Why
@@ -34,12 +34,12 @@ Most agent "memory" is one of two things: a system-prompt scratchpad file, or
 a vector store you dump text into and cosine-search back out. Both work until
 the agent needs to reason about *how things relate* ("which of these leads
 looks like our best client," "how do X and Y connect," "have I been in this
-situation before") — at which point flat text recall stops being enough.
+situation before"), at which point flat text recall stops being enough.
 
 The bet here: keep the fast, cheap paths (keyword/FTS recall, vector
 similarity) but add a real graph underneath, maintained incrementally and for
 free as a side effect of normal memory writes, and make retrieval intentional
-about a case cognitive-science research keeps landing on — that useful recall
+about a case cognitive-science research keeps landing on: that useful recall
 isn't just "most similar," it's sometimes "structurally similar but
 superficially different" (analogy), and long-term memory keeps compressing
 raw experience into reusable categories (chunking, concept formation).
@@ -83,8 +83,8 @@ raw experience into reusable categories (chunking, concept formation).
 ```
 
 Nightly and weekly passes close the loop: `memory_feedback.py` adjusts trust
-scores from what actually got engaged with, `memory_consolidate.py` dedupes
-and archives noise (never by age — only by demonstrated uselessness).
+scores from what actually got engaged with, and `memory_consolidate.py` dedupes
+and archives noise (never by age, only by demonstrated uselessness).
 
 ## Install
 
@@ -104,7 +104,7 @@ cp    scripts/*.py     "$HERMES_HOME/scripts/"
 #      provider: hybrid
 #    (see docs/ARCHITECTURE.md#config-reference for the full block)
 
-# 4. (optional) wire the cron passes — ingest / consolidate / feedback —
+# 4. (optional) wire the cron passes (ingest / consolidate / feedback)
 #    and apply patches/cron-memory-opt-in.diff so cron runs can touch memory
 ```
 
@@ -121,12 +121,12 @@ this outside the `$HERMES_HOME` layout it grew up in.
   version was retired for exactly that reason).
 - **Write-time entity resolution.** Every name (from email senders, call
   transcripts, calendar events, structured business data) resolves through a
-  canonicalization layer (`entity_resolve.py`) before it becomes a graph node
-  — so "Acme Labs," "acme-labs.com," and an email from `@acme-labs.com` all
+  canonicalization layer (`entity_resolve.py`) before it becomes a graph node,
+  so "Acme Labs," "acme-labs.com," and an email from `@acme-labs.com` all
   collapse to one node, while genuinely distinct near-namesakes stay separate.
 - **An analogy slot, for real.** Every turn, one memory can surface not
   because it's *similar* to the current conversation but because it's
-  *structurally* similar while being *superficially different* — using
+  *structurally* similar while being *superficially different*, using
   Holographic Reduced Representations (HRR / phase vectors) to compute
   content similarity independent of surface wording, gated against a
   surface-similarity ceiling from a separate embedding model. This is a
@@ -136,14 +136,14 @@ this outside the `$HERMES_HOME` layout it grew up in.
 - **Chunking and emergent categories.** A weekly pass clusters related facts
   (union-find over shared entities, with a "hub guard" so the owner's own
   name doesn't transitively connect everything) and asks an LLM to compress
-  each cluster into one summary fact — without ever deleting the originals.
+  each cluster into one summary fact, without ever deleting the originals.
   Separately, graph nodes with near-identical relational fingerprints get
   proposed as members of an emergent category node, reviewable before it's
   trusted.
 - **Usage is the feedback signal, not age.** Nothing is ever pruned for being
   old. A fact's trust score moves based on whether it actually gets
   *engaged with* after being surfaced (the user's next query touches its
-  entities or content) — recalled-but-ignored facts quietly rank lower;
+  entities or content). Recalled-but-ignored facts quietly rank lower;
   recalled-and-used facts get reinforced.
 - **A live graph browser.** `brain_viz.py` snapshots the whole store into a
   self-contained interactive HTML graph (vis.js) plus a Mermaid map of the
@@ -152,7 +152,7 @@ this outside the `$HERMES_HOME` layout it grew up in.
 ## Operational cadence
 
 Everything runs as cron jobs against a live `HERMES_HOME`, not inside the
-request path (except `prefetch()`, which is deliberately fast — SQLite reads
+request path (except `prefetch()`, which is deliberately fast: SQLite reads
 and cached lookups only, no LLM calls on the hot path):
 
 | Schedule | Job | Does |
@@ -163,7 +163,7 @@ and cached lookups only, no LLM calls on the hot path):
 
 As of this writing the live deployment's graph has grown to roughly 230
 entities and 450 relationships purely from normal agent use (chat, ingested
-email/calls, calendar) — nobody hand-curates the graph.
+email/calls, calendar); nobody hand-curates the graph.
 
 ## Repo layout
 
@@ -187,7 +187,7 @@ scripts/                 the standalone pipeline scripts (run via cron,
                              clustering, feedback, calendar sync, hybrid helpers)
 docs/
   ARCHITECTURE.md           deep technical dive: data flow, config, internals
-  DESIGN-NOTES.md           the Hofstadter framing — why analogy/chunking/categories
+  DESIGN-NOTES.md           the Hofstadter framing: why analogy/chunking/categories
 patches/
   cron-memory-opt-in.diff   the one local patch against hermes-agent itself
                              (see Status below)
@@ -200,7 +200,7 @@ PYTHONPATH=scripts:<path-to-a-hermes-agent-checkout> \
   python3 -m pytest scripts/tests/ -q
 ```
 
-35 tests, no network/LLM calls, no real HERMES_HOME needed — throwaway SQLite
+35 tests, no network/LLM calls, no real HERMES_HOME needed, with throwaway SQLite
 fixtures per test. See `docs/ARCHITECTURE.md#testing` for what's covered and
 why the upstream checkout is needed for two of the eight files.
 
@@ -215,12 +215,12 @@ This is a staged extraction, not yet a standalone package:
   dependency.
 - `plugins/hybrid/__init__.py` subclasses a bundled provider
   (`plugins.memory.holographic.HolographicMemoryProvider`) that ships with
-  Hermes Agent itself — it is **not** included here (it's upstream, MIT
+  Hermes Agent itself. It is **not** included here (it's upstream, MIT
   licensed, see [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)).
   The subclass degrades gracefully to vector+graph-only if that import fails,
   which is what makes it update-safe against upstream changes.
 - One business-specific pipeline (folding a structured CRM/leads dataset into
-  the graph as a "world model" — same canonicalization + overlay-write
+  the graph as a "world model," using the same canonicalization + overlay-write
   pattern as everything else) was intentionally left out of this snapshot
   since it's tied to a specific dataset; the pattern is described in
   `docs/ARCHITECTURE.md`.
@@ -228,20 +228,20 @@ This is a staged extraction, not yet a standalone package:
   cost: it edits `cron/scheduler.py` inside Hermes Agent itself (not this
   plugin), and gets silently reverted by any upstream update that touches
   that file. Without it, cron-triggered agent runs can't read or write
-  memory at all — see `docs/ARCHITECTURE.md` for why.
+  memory at all; see `docs/ARCHITECTURE.md` for why.
 
 ## Dependencies
 
 `sqlite-vec`, `networkx`, `numpy`, `PyYAML`, and `chromadb` (only for its
-bundled ONNX `all-MiniLM-L6-v2` embedding function — the ChromaDB *store*
+bundled ONNX `all-MiniLM-L6-v2` embedding function; the ChromaDB *store*
 itself is not used). An `OPENROUTER_API_KEY` env var (or `.env` entry) is
 required for the LLM-backed steps (ingest distillation, gisting, chunk
-summarization, category naming, graph reasoning) — everything else degrades
+summarization, category naming, graph reasoning); everything else degrades
 gracefully without it.
 
 ## Contributing
 
-Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The two
+Issues and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). The two
 invariants worth knowing before you touch anything: every layer must degrade
 gracefully when another is missing, and no mechanism is ever allowed to destroy
 memory to save space.

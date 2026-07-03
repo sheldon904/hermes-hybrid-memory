@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""backfill_gists.py — extract gists for the whole existing fact store.
+"""backfill_gists.py, extract gists for the whole existing fact store.
 
 Loops memstore_sync.extract_gists_for_new_facts (batch 25, flash-lite) until
 the gist_extracted watermark covers every fact. Resumable: interrupt any time

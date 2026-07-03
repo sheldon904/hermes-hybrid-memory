@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""backfill_hrr.py — recompute HRR vectors + category banks for every fact.
+"""backfill_hrr.py, recompute HRR vectors + category banks for every fact.
 
 One-shot repair for facts written before the HRR-enabled pipeline came online
 (2026-06-29): they have NULL hrr_vector and are therefore invisible to the
-category banks and the analogy slot. Safe to re-run any time (idempotent —
+category banks and the analogy slot. Safe to re-run any time (idempotent, 
 vectors are deterministic functions of content + entities).
 
 Run inside the Hermes venv:
