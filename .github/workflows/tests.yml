@@ -22,8 +22,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # The plugin subclasses hermes-agent's MemoryProvider base class, so two
-      # of the eight test files need it importable. Only the `agent/` package
+      # The plugin subclasses hermes-agent's MemoryProvider base class, so a few
+      # of the test files need it importable. Only the `agent/` package
       # (a pure-stdlib ABC) is required, grab just that via a sparse, blobless
       # clone instead of pulling the whole upstream repo. This also doubles as
       # an upstream smoke test: if the base class ever changes shape, CI catches
