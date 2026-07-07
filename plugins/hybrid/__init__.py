@@ -406,6 +406,64 @@ SITUATION_STORE_SCHEMA = {
     },
 }
 
+DECISION_LOG_SCHEMA = {
+    "name": "decision_log",
+    "description": (
+        "Record decision traces: what you recommended vs what the user chose. "
+        "Call action='record' when you present the user a RECOMMENDATION, PROPOSAL, "
+        "or set of options on something that matters (a purchase, a plan, an approach, "
+        "an outreach draft), not for ordinary answers. When the user later accepts, "
+        "rejects, or modifies it, call action='resolve' with the outcome and their "
+        "reason if they gave one. These traces improve future recommendations."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["record", "resolve", "list"]},
+            "kind": {"type": "string", "enum": ["recommendation", "option-set", "proposal"],
+                     "description": "record: what shape of decision this is."},
+            "proposal": {"type": "string",
+                         "description": "record: the recommendation, in one line (required)."},
+            "options_shown": {"type": "array", "items": {"type": "string"},
+                              "description": "record: alternatives presented, if any."},
+            "decision_id": {"type": "integer",
+                            "description": "resolve: id from record (omit to resolve the latest pending in this session)."},
+            "outcome": {"type": "string", "enum": ["accepted", "rejected", "modified"],
+                        "description": "resolve: what the user did (required)."},
+            "chosen": {"type": "string",
+                       "description": "resolve: what the user actually went with (esp. when modified)."},
+            "reason": {"type": "string", "description": "resolve: the user's stated reason, if any."},
+        },
+        "required": ["action"],
+    },
+}
+
+ONTOLOGY_REVIEW_SCHEMA = {
+    "name": "ontology_review",
+    "description": (
+        "Review machine-proposed knowledge-graph changes awaiting the user's decision: "
+        "entity alias merges ('are X and Y the same entity?') and proposed categories "
+        "(INSTANCE_OF groupings). Use when the user replies to the weekly ontology nudge "
+        "or asks about memory/graph proposals. action='list' shows the pending queue. "
+        "Approve an alias ONLY when confident both names are the same real-world "
+        "entity, when unsure, ask the user. Approvals permanently merge graph nodes."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["list", "approve", "reject"]},
+            "kind": {"type": "string", "enum": ["alias", "category"],
+                     "description": "approve/reject: which queue."},
+            "a": {"type": "string",
+                  "description": "alias: the name to merge AWAY (loser/variant)."},
+            "b": {"type": "string",
+                  "description": "alias: the name to KEEP (winner/canonical)."},
+            "label": {"type": "string", "description": "category: the category label."},
+        },
+        "required": ["action"],
+    },
+}
+
 ANALOGIZE_SCHEMA = {
     "name": "analogize",
     "description": (
@@ -1081,7 +1139,8 @@ class HybridMemoryProvider(_Base):
         base = (super().get_tool_schemas() if _HOLO else []) or []
         schemas = list(base) + [RECALL_SCHEMA, GRAPH_QUERY_SCHEMA, GRAPH_PATH_SCHEMA,
                                 GRAPH_CONNECTIONS_SCHEMA, GRAPH_REASON_SCHEMA,
-                                CHUNK_EXPAND_SCHEMA, SITUATION_STORE_SCHEMA]
+                                CHUNK_EXPAND_SCHEMA, SITUATION_STORE_SCHEMA,
+                                DECISION_LOG_SCHEMA, ONTOLOGY_REVIEW_SCHEMA]
         if self._hcfg.get("analogize_enabled", True):
             schemas.append(ANALOGIZE_SCHEMA)
         return schemas
@@ -1101,6 +1160,10 @@ class HybridMemoryProvider(_Base):
             return self._handle_chunk_expand(args)
         if tool_name == "situation_store":
             return self._handle_situation_store(args)
+        if tool_name == "decision_log":
+            return self._handle_decision_log(args)
+        if tool_name == "ontology_review":
+            return self._handle_ontology_review(args)
         if tool_name == "analogize":
             return self._handle_analogize(args)
         if _HOLO:
@@ -1298,6 +1361,122 @@ class HybridMemoryProvider(_Base):
                                "count": len(members)})
         except Exception as e:
             return tool_error(str(e))
+
+    def _handle_decision_log(self, args: Dict[str, Any]) -> str:
+        action = args.get("action", "")
+        if self._memcon is None:
+            return tool_error("decision log unavailable")
+        sid = getattr(self, "_session_id", "") or ""
+        if action == "record":
+            proposal = (args.get("proposal") or "").strip()
+            if not proposal:
+                return tool_error("decision_log record requires 'proposal'")
+            kind = args.get("kind") or "recommendation"
+            opts = args.get("options_shown")
+            opts_json = json.dumps([str(o)[:200] for o in opts][:10],
+                                   ensure_ascii=False) if isinstance(opts, list) else "[]"
+            # Auto-attach what memory was surfaced this turn: these are the
+            # facts the recommendation was (potentially) based on.
+            refs = []
+            try:
+                refs = [{"fact_id": r[0], "vid": r[1]} for r in self._memcon.execute(
+                    "SELECT fact_id, vid FROM recall_log "
+                    "WHERE session_id=? AND turn_number=? LIMIT 20",
+                    (sid, self._turn_number))]
+            except Exception:
+                pass
+            try:
+                cur = self._memcon.execute(
+                    "INSERT INTO decision_log(session_id, turn_number, kind, proposal, "
+                    "options_shown, source_refs) VALUES (?,?,?,?,?,?)",
+                    (sid, self._turn_number, kind, proposal[:500], opts_json,
+                     json.dumps(refs, ensure_ascii=False)))
+                self._memcon.commit()
+                return json.dumps({"status": "recorded", "decision_id": cur.lastrowid,
+                                   "linked_recalls": len(refs)})
+            except Exception as e:
+                return tool_error(f"decision record failed: {e}")
+        if action == "resolve":
+            outcome = args.get("outcome") or ""
+            if outcome not in ("accepted", "rejected", "modified"):
+                return tool_error("decision_log resolve requires outcome in "
+                                  "accepted|rejected|modified")
+            did = args.get("decision_id")
+            try:
+                if did is None:
+                    row = self._memcon.execute(
+                        "SELECT id FROM decision_log WHERE outcome='pending' "
+                        "AND session_id=? ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
+                    if row is None:
+                        # Cross-session fallback: user may reply in a later session.
+                        row = self._memcon.execute(
+                            "SELECT id FROM decision_log WHERE outcome='pending' "
+                            "ORDER BY id DESC LIMIT 1").fetchone()
+                    if row is None:
+                        return tool_error("no pending decision to resolve")
+                    did = row[0]
+                n = self._memcon.execute(
+                    "UPDATE decision_log SET outcome=?, chosen=?, reason=? "
+                    "WHERE id=? AND outcome='pending'",
+                    (outcome, (args.get("chosen") or "")[:500],
+                     (args.get("reason") or "")[:500], int(did))).rowcount
+                self._memcon.commit()
+                if not n:
+                    return tool_error(f"decision {did} not found or already resolved")
+                return json.dumps({"status": "resolved", "decision_id": int(did),
+                                   "outcome": outcome})
+            except Exception as e:
+                return tool_error(f"decision resolve failed: {e}")
+        if action == "list":
+            try:
+                rows = self._memcon.execute(
+                    "SELECT id, ts, kind, proposal, outcome, chosen FROM decision_log "
+                    "ORDER BY id DESC LIMIT 15").fetchall()
+                return json.dumps({"decisions": [
+                    {"id": r[0], "ts": r[1], "kind": r[2], "proposal": r[3],
+                     "outcome": r[4], "chosen": r[5] or ""} for r in rows]})
+            except Exception as e:
+                return tool_error(str(e))
+        return tool_error("decision_log requires action record|resolve|list")
+
+    def _handle_ontology_review(self, args: Dict[str, Any]) -> str:
+        action = args.get("action", "")
+        if self._memcon is None:
+            return tool_error("ontology review unavailable")
+        try:
+            import ontology_review as orv
+        except Exception as e:
+            return tool_error(f"ontology_review module unavailable: {e}")
+        con = self._memcon
+        if action == "list":
+            return json.dumps({
+                "aliases": [{"a": a, "b": b} for a, b, _ in orv.pending_aliases(con)],
+                "categories": [{"label": k, "members": v}
+                               for k, v in orv.pending_categories(con).items()],
+            })
+        if action in ("approve", "reject"):
+            kind = args.get("kind") or ""
+            try:
+                if kind == "alias":
+                    a, b = (args.get("a") or "").strip(), (args.get("b") or "").strip()
+                    if not a or not b:
+                        return tool_error("alias review requires 'a' (merge away) and 'b' (keep)")
+                    result = (orv.approve_alias(con, a, b) if action == "approve"
+                              else orv.reject_alias(con, a, b))
+                elif kind == "category":
+                    label = (args.get("label") or "").strip()
+                    if not label:
+                        return tool_error("category review requires 'label'")
+                    result = (orv.approve_category(con, label) if action == "approve"
+                              else orv.reject_category(con, label))
+                else:
+                    return tool_error("ontology_review requires kind alias|category")
+            except Exception as e:
+                return tool_error(f"ontology review failed: {e}")
+            if action == "approve":
+                self._load_graph()  # refresh the cached graph after mutations
+            return json.dumps(result)
+        return tool_error("ontology_review requires action list|approve|reject")
 
     def _handle_situation_store(self, args: Dict[str, Any]) -> str:
         action = args.get("action", "")

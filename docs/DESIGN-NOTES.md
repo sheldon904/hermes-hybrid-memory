@@ -55,10 +55,15 @@ schema as fixed:
   after the fact, reviewable before anything trusts it.
 
 Neither mechanism is allowed to happen silently and unreviewably: chunks keep
-their members, category proposals are tagged `src_tag='proposed'` and
-wipeable in one call. The goal is categories that *emerge from use* while
-staying falsifiable, closer to how Hofstadter describes concepts actually
-forming than to a fixed ontology decided in advance.
+their members, and category proposals (along with fuzzy entity-alias merges)
+are tagged `src_tag='proposed'` / `'alias-candidate'` and stay **hidden from
+every reader** until a human approves them through the `ontology_review` gate,
+a rejection is durable so the same guess isn't re-proposed, and the whole
+thing is wipeable in one call. The goal is categories that *emerge from use*
+while staying falsifiable: the machine may propose structure, but a person
+confirms it before anything depends on it, which is closer to how Hofstadter
+describes concepts actually forming than either a fixed ontology decided in
+advance or an unsupervised clusterer trusted blindly.
 
 ## What this explicitly doesn't claim
 

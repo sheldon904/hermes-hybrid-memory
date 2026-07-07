@@ -43,8 +43,17 @@ first-class graph citizenship instead of being buried in prose, with the
 start date embedded in the node name so recurring/similar events stay
 distinct.
 
+The node-type enum the prompt is allowed to emit is a fixed whitelist
+(`person`, `company`, `project`, `idea`, `location`, `event`, `job`,
+`document`); anything else is dropped rather than trusted, so the graph's type
+space stays closed the same way its relation space does.
+
 Raw document text is *never* stored as a fact, only the distilled output.
 An ingest ledger (`~/.hermes/ingest/ledger.json`) makes re-runs idempotent.
+Every fact and every edge also carries a `source_ref` stamped at write time
+(`<source>:<docid>` for ingest, `gcal:<eventId>` for calendar), so a surfaced
+memory can be traced back to the email, call, or event it came from; see
+[Provenance](#11-provenance) below.
 
 Every node/edge from extraction passes through `entity_resolve.py` before
 being written (see below), and lands directly in `memstore`; there's no
@@ -66,11 +75,23 @@ names. Resolution order, strongest signal first:
    `POSSIBLE_ALIAS` edge instead of a silent merge.
 3. Otherwise: register a new canonical entity.
 
-A separate controlled vocabulary (`normalize_relation`) collapses ad-hoc LLM
+A **closed** controlled vocabulary (`canon_relation`) collapses ad-hoc LLM
 relation labels (`works_at`, `employed_by`, `staff_of`, ...) onto one
-canonical predicate (`WORKS_FOR`) so multi-hop graph queries stay consistent,
-while still passing genuinely novel relations through cleaned rather than
-rejecting them.
+canonical predicate (`WORKS_FOR`) so multi-hop graph queries, relational
+fingerprints, and analogy search all stay consistent. Resolution runs in a
+fixed order: exact map, then an inverse/passive map (`owned_by` -> `OWNS` with
+the edge direction flipped, signalled by a `flipped=True` return the caller
+acts on), then an ordered set of stem rules, and finally a `RELATED_TO`
+default. Crucially there is **no passthrough**: an unrecognized label lands on
+`RELATED_TO`, it is never minted as a new relation type. (An earlier version
+did pass novel relations through cleaned; in practice that grew the graph to
+hundreds of distinct predicates from a few thousand edges, which broke
+fingerprint comparison, so the vocabulary was closed to a fixed set of ~38
+canonical predicates.) The raw extractor string is preserved in
+`edges.rel_orig` whenever `canon_relation` changed it, so vocabulary drift is
+observable (`SELECT rel_orig, COUNT(*) FROM edges WHERE rel_orig != ''`).
+`normalize_relation` remains as a thin wrapper returning just the canonical
+string.
 
 ### 3. Prefetch: what gets injected every turn
 
@@ -161,8 +182,11 @@ relational fingerprints are near-identical (cosine ≥0.8) get grouped, and an
 LLM names the emergent category (e.g. a cluster of company nodes that all
 have `PROSPECT` + `LOCATED_IN <same metro>` edges might get named
 `"regional prospects"`). The proposal is written as `INSTANCE_OF` edges
-tagged `src_tag='proposed'`, reviewable, and revertible in one line
-(`remove_edges_by_tag`).
+tagged `src_tag='proposed'`, and, until a human approves it, it is **hidden
+from every reader** (prefetch and all graph tools), so an unreviewed guess can
+never surface as if it were ground truth. Approval, rejection, and the review
+queue are handled by the `ontology_review` tool; see
+[Operator review of graph proposals](#13-operator-review-of-graph-proposals).
 
 ### 6. Trust feedback (nightly)
 
@@ -237,6 +261,80 @@ core entities and a handful of PII-filtered sample facts, all into one
 Markdown file that renders directly on GitHub. Nothing it writes is fed back
 in. It exists purely so the memory is inspectable instead of a black box.
 
+### 11. Provenance
+
+Every fact and every edge carries a `source_ref` column stamped at write time,
+so a surfaced memory is traceable back to what produced it. `memory_ingest.py`
+stamps `<source>:<docid>` (first-assertion semantics: the ref keyed on the
+`fact_id` the store returns, so the earliest document to assert a fact owns
+it); `calendar_graph_sync.py` stamps `gcal:<eventId>`. Consumed ingest spools
+are archived (not deleted) under `ingest/archive/` so those refs stay
+dereferenceable. The `recall` tool and `graph_query` neighbor listings surface
+the ref as a `src` field. One honest gap: the batch edge-mining pass
+(`extract_edges_for_new_facts`) infers edges across many facts at once and
+can't attribute a single source, so those edges keep an empty ref by design.
+The `edges.source_ref` column is added idempotently by `memstore._ensure_column`
+in `init_schema`; the fact-side column (the `facts` table is owned upstream) is
+added once by `migrations/2026-07-provenance.py`, so an existing
+`memory_store.db` converges without a rebuild.
+
+### 12. Decision traces
+
+`decision_log` (a table in `memstore`, plus the `decision_log` tool on the
+provider) records what the agent *recommended* versus what the user actually
+*did*. On `action='record'` it snapshots the recommendation and auto-links the
+`recall_log` rows from that same turn as `source_refs`, i.e. the facts the
+recommendation was (potentially) based on. On `action='resolve'` the outcome
+(`accepted` / `modified` / `rejected`) is written back, falling back to the
+latest pending decision in the session (or, if the user replies much later,
+the latest pending anywhere). The nightly feedback pass then turns outcomes
+into signal: `memory_feedback.sweep_decisions` ages any decision left pending
+more than 7 days to `ignored`, and applies a small trust bump (`+0.02`,
+exactly once, guarded by a `trust_applied` flag) to the facts linked under an
+`accepted` or `modified` decision, on the theory that memory which fed a
+recommendation the user took is memory worth trusting a little more. This is
+deliberately the same proposal -> outcome -> reinforcement shape as the trust
+loop in section 6, applied one level up, at the recommendation rather than the
+individual fact.
+
+### 13. Operator review of graph proposals
+
+Two of the mechanisms above generate *proposals*, not facts: fuzzy
+entity-resolution near-misses (`POSSIBLE_ALIAS`, `src_tag='alias-candidate'`,
+section 2) and emergent-category groupings (`INSTANCE_OF`, `src_tag='proposed'`,
+section 5). Neither is trusted until a human says so. `ontology_review.py`
+(library + CLI, and the `ontology_review` tool on the provider) is the gate:
+
+- `list` shows the pending queue (alias pairs and proposed categories).
+- `approve alias` calls `Resolver.add_alias` (so *future* writes canonicalize)
+  and `memstore.merge_nodes` (so the *existing* graph collapses the two nodes).
+- `reject alias` / `reject category` flips the edge to `src_tag='rejected'`
+  rather than deleting it: the `(src, rel, dst)` primary key then makes any
+  future re-proposal an `INSERT OR IGNORE` no-op, so a rejection is durable and
+  the machine doesn't keep re-suggesting the same bad merge.
+- `approve category` flips the `INSTANCE_OF` edges to `src_tag='curated'`.
+
+The enforcement point is `memstore.load_graph`, which excludes
+`proposed`, `rejected`, and `alias-candidate` tags by default, so unreviewed
+(and rejected) proposals are invisible to prefetch and every graph tool until
+approval promotes them. A weekly cron (`ontology_review.py --nudge`) prints the
+queue only when it's non-empty, and stays silent otherwise, so the human is
+pinged to review exactly when there's something to review. This is the
+falsifiability tenet from [DESIGN-NOTES.md](DESIGN-NOTES.md) made operational:
+the system may *propose* structure, but a person confirms it before anything
+depends on it.
+
+### 14. Entity-type sync
+
+Facts and the graph learn entity types on different paths (the graph gets a
+`type` from the ingest extractor; the fact-side `entities` table often
+doesn't), so `memstore_sync.sync_entity_types` copies `graph_nodes.type` onto
+any untyped `entities.entity_type`, canonicalizing names through
+`entity_resolve` so the two sides line up. It rides the 15-minute ingest cron
+and is idempotent (only ever fills blanks). This is what lets same-type
+constraints (analogy candidate typing, category fingerprinting) work on the
+fact side, not just the graph side.
+
 ## Config reference
 
 ```yaml
@@ -282,16 +380,20 @@ behavior with none of the above.
 
 ## Testing
 
-`scripts/tests/` is a real, currently-green pytest suite (35 tests) covering
+`scripts/tests/` is a real, currently-green pytest suite (59 tests) covering
 the pure-function and schema-level behavior of every mechanism above:
 `memstore` schema/vector/graph primitives, `entity_resolve`'s merge/fuzzy/
-alias-candidate logic, `memory_abstract`'s cluster rules (hub guard, size
-bounds, age gate, never-delete invariant), `memory_feedback`'s engagement
-heuristic and trust clamps, `calendar_graph_sync`'s event-naming and
-staleness rules, and the hybrid plugin's entity-candidate hygiene and pure
-helper functions (`_cap_blocks`, `_content_words`, `_fact_id_from_vid`,
-`_counter_cosine`). None of it touches a real LLM or network call; `facts_db`
-and `mem_db` fixtures in `conftest.py` build a throwaway schema per test.
+alias-candidate logic and the closed relation vocabulary (`canon_relation`
+exact/flip/stem resolution), the one-time relation-remap migration,
+`memory_abstract`'s cluster rules (hub guard, size bounds, age gate,
+never-delete invariant), `memory_feedback`'s engagement heuristic, trust
+clamps, and decision-outcome sweep, `calendar_graph_sync`'s event-naming and
+staleness rules, `ontology_review`'s approve/reject/durable-rejection logic,
+the `decision_log` record/resolve flow, and the hybrid plugin's
+entity-candidate hygiene and pure helper functions (`_cap_blocks`,
+`_content_words`, `_fact_id_from_vid`, `_counter_cosine`). None of it touches a
+real LLM or network call; `facts_db` and `mem_db` fixtures in `conftest.py`
+build a throwaway schema per test.
 
 `conftest.py` documents its own purpose plainly: it doubles as a smoke suite
 against upstream breakage: if a Hermes Agent update shifts the holographic
@@ -303,7 +405,7 @@ HERMES_HOME=<scratch dir> PYTHONPATH=scripts:<path-to-hermes-agent> \
 ```
 
 (`PYTHONPATH` needs both `scripts/` (for `memstore`, `entity_resolve`, etc.)
-and a `hermes-agent` checkout, since two test files load
+and a `hermes-agent` checkout, since a handful of the test files load
 `plugins/hybrid/__init__.py` directly and it imports the upstream holographic
 base class.)
 

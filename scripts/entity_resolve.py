@@ -221,9 +221,12 @@ def canonical(name, **kw) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Relation ontology, collapse ad-hoc LLM predicates to a controlled vocabulary
-# so multi-hop paths are consistent and queryable. Unknown relations pass
-# through (cleaned), so the vocabulary grows without rejecting novel edges.
+# Relation ontology, collapse ad-hoc LLM predicates to a CLOSED controlled
+# vocabulary so multi-hop paths, fingerprints, and analogy search stay
+# consistent. Since 2026-07-06 unknown relations no longer pass through (that
+# grew 344 distinct relations for 1,607 edges): exact map -> flip map (inverse
+# forms, caller swaps src/dst) -> ordered stem rules -> RELATED_TO. The raw
+# extractor string is preserved in edges.rel_orig.
 # ---------------------------------------------------------------------------
 
 _RELATION_CANON = {
@@ -232,7 +235,10 @@ _RELATION_CANON = {
     "employee_of": "WORKS_FOR", "staff_of": "WORKS_FOR",
     "founded": "FOUNDED", "founder_of": "FOUNDED", "co_founded": "FOUNDED", "cofounded": "FOUNDED",
     "owns": "OWNS", "owner_of": "OWNS",
-    "ceo_of": "LEADS", "leads": "LEADS", "runs": "LEADS", "director_of": "LEADS", "manages": "LEADS",
+    "ceo_of": "LEADS", "cto_of": "LEADS", "coo_of": "LEADS", "cfo_of": "LEADS",
+    "leads": "LEADS", "runs": "LEADS", "director_of": "LEADS", "manages": "LEADS",
+    "co_founder_of": "FOUNDED", "cofounder_of": "FOUNDED",
+    "founded_with": "AFFILIATED_WITH", "acquired": "OWNS", "equity_holder": "OWNS",
     "contact_at": "CONTACT_AT", "point_of_contact": "CONTACT_AT", "poc_for": "CONTACT_AT",
     "has_point_of_contact": "CONTACT_AT",
     # commercial
@@ -242,6 +248,10 @@ _RELATION_CANON = {
     "vendor_of": "VENDOR_OF", "supplier_of": "VENDOR_OF",
     "partner_of": "PARTNER_OF", "reseller_of": "PARTNER_OF", "distributor_for": "PARTNER_OF",
     "applied_to": "APPLIED_TO", "interviewing_with": "APPLIED_TO",
+    "interviewed_with": "APPLIED_TO", "interviewed_at": "APPLIED_TO",
+    "interviewed_by": "APPLIED_TO",
+    "met": "CONTACTED", "met_with": "CONTACTED", "worked_on": "HAS_PROJECT",
+    "application_deadline_is": "RELATED_TO",
     "interested_in": "INTERESTED_IN", "wants": "INTERESTED_IN", "evaluating": "INTERESTED_IN",
     "offers": "OFFERS", "provides": "OFFERS", "sells": "OFFERS",
     "owes": "OWES", "has_outstanding_invoice": "OWES",
@@ -257,22 +267,107 @@ _RELATION_CANON = {
     "uses": "USES", "uses_stack": "USES", "uses_tool": "USES", "built_with": "USES",
     "deployment_of": "DEPLOYS", "deploys": "DEPLOYS",
     # personal
-    "married_to": "SPOUSE_OF", "dating": "PARTNER_OF",
-    "child_of": "CHILD_OF", "parent_of": "PARENT_OF", "sibling_of": "SIBLING_OF",
+    "married_to": "SPOUSE_OF", "spouse_of": "SPOUSE_OF", "dating": "PARTNER_OF",
+    "girlfriend_of": "PARTNER_OF", "boyfriend_of": "PARTNER_OF",
+    "in_relationship_with": "PARTNER_OF",
+    "mother_of": "PARENT_OF", "father_of": "PARENT_OF",
+    "parent_of": "PARENT_OF", "sibling_of": "SIBLING_OF",
     "step_child_of": "STEP_CHILD_OF",
-    "attended": "ATTENDED", "attends": "ATTENDS", "studies_at": "ATTENDS", "graduated_from": "ATTENDED",
-    "mentioned": "MENTIONED", "about": "ABOUT", "related_to": "RELATED_TO",
+    "attended": "ATTENDS", "attends": "ATTENDS", "studies_at": "ATTENDS",
+    "student_at": "ATTENDS", "graduated_from": "ATTENDS",
+    "mentioned": "ABOUT", "about": "ABOUT", "related_to": "RELATED_TO",
+    # jobs pipeline (observed variants, 2026-07-06 vocabulary closure)
+    "has_job": "HIRING", "offers_job": "HIRING", "offers_role": "HIRING",
+    "has_job_posting": "HIRING", "has_job_opening": "HIRING", "posted_job": "HIRING",
+    "posted": "HIRING", "hiring": "HIRING", "hiring_for": "HIRING",
+    "applied_to": "APPLIED_TO", "applied_for": "APPLIED_TO", "interviewed_for": "APPLIED_TO",
+    "applied_via": "USES", "posted_on": "POSTED_ON",
+    "recruiter_at": "WORKS_FOR", "recruiter_for": "WORKS_FOR",
+    # location variants
+    "location": "LOCATED_IN", "is_location": "LOCATED_IN", "in_location": "LOCATED_IN",
+    "at_location": "LOCATED_IN", "is_located_in": "LOCATED_IN",
+    "location_of_job_opening": "LOCATED_IN", "search_location": "LOCATED_IN",
+    "work_location": "LOCATED_IN", "for_positions_in": "LOCATED_IN",
+    "has_job_posting_in": "LOCATED_IN", "offered_in": "LOCATED_IN",
+    "offers_onsite_in": "LOCATED_IN", "offers_hybrid_in": "LOCATED_IN",
+    # attribute-shaped noise -> generic
+    "has_salary": "RELATED_TO", "effective_date": "RELATED_TO",
+    "expires_on": "RELATED_TO", "application_deadline": "RELATED_TO",
+    # identity entries so the closed vocabulary + system relations round-trip
+    "travels_to": "TRAVELS_TO", "part_of": "PART_OF", "member_of": "MEMBER_OF",
+    "affiliated_with": "AFFILIATED_WITH", "involves": "INVOLVES", "leads": "LEADS",
+    "instance_of": "INSTANCE_OF", "possible_alias": "POSSIBLE_ALIAS",
 }
+
+# Inverse/passive forms: canonical relation + the edge direction must be
+# swapped by the caller (canon_relation returns flipped=True).
+_RELATION_FLIP = {
+    "offered_by": "OFFERS", "provided_by": "OFFERS", "issued_by": "OFFERS",
+    "operated_by": "OFFERS", "developed_by": "OFFERS",
+    "posted_by": "HIRING", "job_posted_by": "HIRING",
+    "role_at": "HIRING", "is_role_at": "HIRING",
+    "led_by": "LEADS", "managed_by": "LEADS", "run_by": "LEADS",
+    "owned_by": "OWNS", "founded_by": "FOUNDED", "co_founded_by": "FOUNDED",
+    "child_of": "PARENT_OF",
+    "employs": "WORKS_FOR", "employer_of": "WORKS_FOR",
+    "has_cto": "LEADS", "has_ceo": "LEADS",
+}
+
+# Ordered stem fallback (first match wins, order matters: location before
+# OFFER, APPLI before JOB, COFOUNDER before FOUND). Matched against the
+# normalized lower_snake string.
+_RELATION_STEMS = (
+    ("locat|based|headquarter|address", "LOCATED_IN"),
+    ("appl[iy]", "APPLIED_TO"),
+    ("hiring|vacanc|job|position|recruit", "HIRING"),
+    ("post", "POSTED_ON"),
+    ("cofounder|co_founder", "AFFILIATED_WITH"),
+    ("work|employ|staff", "WORKS_FOR"),
+    ("found", "FOUNDED"),
+    ("contact|reached|email", "CONTACTED"),
+    ("stud|attend|enroll|graduat", "ATTENDS"),
+    ("own", "OWNS"),
+    ("lead|ceo|director|manag", "LEADS"),
+    ("partner", "PARTNER_OF"),
+    ("offer|provid|sell", "OFFERS"),
+    ("member", "MEMBER_OF"),
+    ("travel|visit", "TRAVELS_TO"),
+    ("use|deploy", "USES"),
+    ("interest", "INTERESTED_IN"),
+    ("sent|receiv|notif|updat|date|deadline|via|salary", "RELATED_TO"),
+)
+_STEM_RES = [(re.compile(pat), canon) for pat, canon in _RELATION_STEMS]
+
+
+def canon_relation(rel) -> tuple:
+    """Map any relation string into the closed vocabulary.
+
+    Returns (canonical, flipped). flipped=True means the relation was a
+    passive/inverse form and the CALLER must swap the edge's src/dst (this
+    function only sees the string). Unknown relations no longer pass through
+    (that was the vocabulary-sprawl engine), they fall to RELATED_TO; the
+    original string survives in edges.rel_orig for observability.
+    """
+    if not rel:
+        return "RELATED_TO", False
+    r = re.sub(r"[^a-z0-9]+", "_", str(rel).strip().lower()).strip("_")
+    if r in _RELATION_CANON:
+        return _RELATION_CANON[r], False
+    if r in _RELATION_FLIP:
+        return _RELATION_FLIP[r], True
+    # Generic passive marker: a trailing _by means subject/object are inverted
+    # ("X IS_DEVELOPED_AND_OFFERED_BY Y" == "Y OFFERS X").
+    passive = r.endswith("_by")
+    for cre, canon in _STEM_RES:
+        if cre.search(r):
+            return canon, passive
+    return "RELATED_TO", False
 
 
 def normalize_relation(rel) -> str:
-    """Map a relation to the controlled vocabulary; pass novel ones through cleaned."""
-    if not rel:
-        return "RELATED_TO"
-    r = re.sub(r"[^a-z0-9]+", "_", str(rel).strip().lower()).strip("_")
-    if r in _RELATION_CANON:
-        return _RELATION_CANON[r]
-    return (r.upper()[:40] or "RELATED_TO")
+    """Back-compat string form of canon_relation (cannot express direction
+    flips, callers that own (src, dst) should use canon_relation)."""
+    return canon_relation(rel)[0]
 
 
 # ---------------------------------------------------------------------------

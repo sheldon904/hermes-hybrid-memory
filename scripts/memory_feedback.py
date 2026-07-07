@@ -96,9 +96,57 @@ def is_engaged(fact_row, entities, later_queries):
     return False
 
 
-def compute_deltas(con, pos_days=1):
+DECISION_IGNORE_DAYS = 7
+
+
+def sweep_decisions(con, apply):
+    """Decision-trace pass (Phase 3, 2026-07-06). Ages pending decisions to
+    'ignored' after DECISION_IGNORE_DAYS, and turns resolved decisions into
+    trust signal: accepted/modified -> POS_DELTA for the facts recalled on the
+    recommendation turn (source_refs). Rejected -> no boost. Each decision is
+    applied to trust exactly once (trust_applied flag). Returns
+    (n_ignored, pos_deltas, resolved_turns, applied_ids): resolved_turns are
+    (session_id, turn_number) pairs whose surfacings the token-overlap
+    heuristic should skip, the decision outcome is the better signal."""
+    import json as _json
+    try:
+        con.execute("SELECT 1 FROM decision_log LIMIT 1")
+    except sqlite3.OperationalError:
+        return 0, {}, set(), []
+
+    n_ignored = con.execute(
+        "SELECT COUNT(*) FROM decision_log WHERE outcome='pending' "
+        "AND ts < datetime('now', ?)", (f"-{DECISION_IGNORE_DAYS} days",)).fetchone()[0]
+    if apply and n_ignored:
+        con.execute(
+            "UPDATE decision_log SET outcome='ignored' WHERE outcome='pending' "
+            "AND ts < datetime('now', ?)", (f"-{DECISION_IGNORE_DAYS} days",))
+
+    pos, resolved_turns, applied = {}, set(), []
+    for r in con.execute(
+            "SELECT id, session_id, turn_number, outcome, source_refs FROM decision_log "
+            "WHERE outcome IN ('accepted','rejected','modified') AND trust_applied=0"):
+        resolved_turns.add((r["session_id"], r["turn_number"]))
+        applied.append(r["id"])
+        if r["outcome"] == "rejected":
+            continue
+        try:
+            refs = _json.loads(r["source_refs"] or "[]")
+        except Exception:
+            refs = []
+        for ref in refs:
+            fid = ref.get("fact_id") if isinstance(ref, dict) else None
+            if fid:
+                pos[int(fid)] = POS_DELTA
+    return n_ignored, pos, resolved_turns, applied
+
+
+def compute_deltas(con, pos_days=1, excluded_turns=None):
     con.row_factory = sqlite3.Row
+    excluded_turns = excluded_turns or set()
     surf, stream = load_surfacings(con, NEG_WINDOW_DAYS)
+    surf = [r for r in surf
+            if (r["session_id"], r["turn_number"]) not in excluded_turns]
     if not surf:
         return {}, {}
 
@@ -185,11 +233,22 @@ def main():
     con.execute("PRAGMA busy_timeout=30000")
 
     total = con.execute("SELECT COUNT(*) FROM recall_log").fetchone()[0]
-    pos, neg = compute_deltas(con)
+    n_ignored, dec_pos, resolved_turns, applied_ids = sweep_decisions(con, apply)
+    pos, neg = compute_deltas(con, excluded_turns=resolved_turns)
+    # A decision outcome outranks the token-overlap proxy for the same fact.
+    for fid in dec_pos:
+        pos.pop(fid, None)
+        neg.pop(fid, None)
     print(f"recall_log rows: {total} | engaged (recent): {len(pos)} | "
-          f"surfaced-but-never-engaged (14d, >={NEG_MIN_TURNS} turns): {len(neg)}")
+          f"surfaced-but-never-engaged (14d, >={NEG_MIN_TURNS} turns): {len(neg)} | "
+          f"decisions: {len(applied_ids)} resolved, {n_ignored} aged to ignored")
+    n_dec = apply_deltas(con, dec_pos, apply, "decision-accepted")
     n_pos = apply_deltas(con, pos, apply, "engaged")
     n_neg = apply_deltas(con, neg, apply, "surfaced-unengaged")
+
+    if apply and applied_ids:
+        con.executemany("UPDATE decision_log SET trust_applied=1 WHERE id=?",
+                        [(i,) for i in applied_ids])
 
     pruned = 0
     if apply:
@@ -200,7 +259,8 @@ def main():
         con.commit()
 
     if apply:
-        print(f"applied: +{n_pos} boosts, {n_neg} demotions | pruned {pruned} old recall_log rows")
+        print(f"applied: +{n_dec} decision boosts, +{n_pos} boosts, {n_neg} demotions | "
+              f"pruned {pruned} old recall_log rows")
     else:
         print(f"\nDRY RUN, nothing changed ({n_pos} boosts, {n_neg} demotions pending). "
               "Re-run with --apply to write.")

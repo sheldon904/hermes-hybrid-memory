@@ -145,6 +145,23 @@ this outside the `$HERMES_HOME` layout it grew up in.
   *engaged with* after being surfaced (the user's next query touches its
   entities or content). Recalled-but-ignored facts quietly rank lower;
   recalled-and-used facts get reinforced.
+- **Provenance on every write.** Each fact and edge carries a `source_ref`
+  stamped at write time (`<source>:<docid>`, `gcal:<eventId>`), and consumed
+  ingest spools are archived rather than deleted, so a surfaced memory can be
+  traced back to the email, call, or calendar event that produced it. `recall`
+  and `graph_query` surface it as a `src` field.
+- **Machine proposes, human disposes.** The two mechanisms that *guess* (fuzzy
+  entity-alias merges and emergent-category groupings) never surface as truth:
+  their edges are tagged (`alias-candidate` / `proposed`) and hidden from
+  prefetch and every graph tool by default until a human approves them through
+  the `ontology_review` tool. Rejections are durable (the edge is kept and
+  tagged `rejected` so the same bad merge can't be re-proposed), and a weekly
+  cron nudges for review only when the queue is non-empty.
+- **Decision traces close a second loop.** A `decision_log` tool records what
+  the agent recommended versus what the user actually did, auto-linking the
+  facts surfaced that turn; the nightly pass then nudges trust on the memory
+  behind recommendations the user took. Same proposal -> outcome ->
+  reinforcement shape as the fact-level trust loop, one level up.
 - **A live graph browser.** `brain_viz.py` snapshots the whole store into a
   self-contained interactive HTML graph (vis.js) plus a Mermaid map of the
   core, so the memory is inspectable, not a black box.
@@ -157,13 +174,15 @@ and cached lookups only, no LLM calls on the hot path):
 
 | Schedule | Job | Does |
 |---|---|---|
-| every 15 min | `memory-ingest` | drain spooled emails/calls → `memory_ingest.py` → `calendar_graph_sync.py` → `memstore_sync.py` |
+| every 15 min | `memory-ingest` | drain spooled emails/calls → `memory_ingest.py` → `calendar_graph_sync.py` → `memstore_sync.py` (vectorize + gist + edge-mine + `sync_entity_types`) |
 | weekly (Mon 04:00) | `memory-consolidate` | `memory_consolidate.py --apply` (dedup + junk archival) → `memory_abstract.py --apply` (chunking + category proposals) → resync |
-| nightly (03:45) | `memory-feedback` | `memory_feedback.py --apply` (trust adjustment from engagement, recall-log pruning) |
+| weekly (Mon 09:00) | `ontology-review-nudge` | `ontology_review.py --nudge` (message the pending alias/category queue for review; silent when empty) |
+| nightly (03:45) | `memory-feedback` | `memory_feedback.py --apply` (trust adjustment from engagement, decision-outcome sweep, recall-log pruning) |
 
-As of this writing the live deployment's graph has grown to roughly 230
-entities and 450 relationships purely from normal agent use (chat, ingested
-email/calls, calendar); nobody hand-curates the graph.
+As of this writing the live deployment's graph has grown to roughly 1,000
+nodes and 1,600 relationships purely from normal agent use (chat, ingested
+email/calls, calendar); nobody hand-curates the graph, machine-proposed merges
+and categories only enter it after the human approves them.
 
 ## Repo layout
 
@@ -178,13 +197,18 @@ scripts/                 the standalone pipeline scripts (run via cron,
   memstore_sync.py          incremental vectorize + gist + edge mining
   memory_abstract.py        weekly: chunking + emergent category promotion
   memory_consolidate.py     dedup + junk archival (never by age)
-  memory_feedback.py        nightly: usage-based trust adjustment
+  memory_feedback.py        nightly: usage-based trust + decision-outcome sweep
   calendar_graph_sync.py    mirrors calendar events into the graph as episodes
+  ontology_review.py        operator gate for proposed aliases/categories
+                             (library + CLI + weekly --nudge)
   brain_viz.py              snapshot the store as an interactive graph explorer
   backfill_hrr.py           one-shot: recompute HRR vectors for existing facts
   backfill_gists.py         one-shot: backfill gists for existing facts
-  tests/                    35-test pytest suite (schema, entity resolution,
-                             clustering, feedback, calendar sync, hybrid helpers)
+  migrations/               idempotent one-time schema/data migrations
+                             (provenance columns, relation-vocabulary remap)
+  tests/                    pytest suite (schema, entity resolution + relation
+                             vocab, clustering, feedback, decision sweep,
+                             calendar sync, hybrid helpers)
 docs/
   ARCHITECTURE.md           deep technical dive: data flow, config, internals
   DESIGN-NOTES.md           the Hofstadter framing: why analogy/chunking/categories
@@ -200,9 +224,9 @@ PYTHONPATH=scripts:<path-to-a-hermes-agent-checkout> \
   python3 -m pytest scripts/tests/ -q
 ```
 
-35 tests, no network/LLM calls, no real HERMES_HOME needed, with throwaway SQLite
+59 tests, no network/LLM calls, no real HERMES_HOME needed, with throwaway SQLite
 fixtures per test. See `docs/ARCHITECTURE.md#testing` for what's covered and
-why the upstream checkout is needed for two of the eight files.
+why a few of the test files need an upstream `hermes-agent` checkout on the path.
 
 ## Status
 

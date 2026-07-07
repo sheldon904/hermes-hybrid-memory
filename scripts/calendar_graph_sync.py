@@ -113,18 +113,19 @@ def main() -> int:
         if ev.get("location"):
             attrs["location"] = ev["location"][:120]
         ms.add_node(con, name, "event", attrs)
-        ms.add_edge(con, OWNER, "ATTENDS", name, CAL_TAG)
+        source_ref = f"gcal:{eid}"[:200] if eid else ""
+        ms.add_edge(con, OWNER, "ATTENDS", name, CAL_TAG, source_ref=source_ref)
         upserts += 1
         edges += 1
         haystack = " ".join([ev.get("summary") or "", ev.get("description") or "",
                              ev.get("location") or ""]).lower()
         for low, canon in people.items():
             if low in haystack:
-                ms.add_edge(con, name, "INVOLVES", canon, CAL_TAG)
+                ms.add_edge(con, name, "INVOLVES", canon, CAL_TAG, source_ref=source_ref)
                 edges += 1
         for low, canon in places.items():
             if low in haystack:
-                ms.add_edge(con, name, "LOCATED_IN", canon, CAL_TAG)
+                ms.add_edge(con, name, "LOCATED_IN", canon, CAL_TAG, source_ref=source_ref)
                 edges += 1
 
     # Prune future events that were cancelled or renamed.

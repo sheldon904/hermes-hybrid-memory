@@ -81,15 +81,26 @@ def extract(text: str, source: str, meta: dict) -> dict:
         "remembering; name its subject so it stands alone (e.g. \"Acme Corp's "
         "platform go-live is targeted for the week of July 13\", not \"go-live is week of "
         "July 13\").\n"
-        '{"node":{"name":"X","type":"person|company|project|location|idea"}}  a concrete '
-        "named entity mentioned.\n"
+        '{"node":{"name":"X","type":"person|company|project|location|job|document|idea"}}  '
+        "a concrete named entity mentioned. Job titles/roles are type job, not idea.\n"
         '{"node":{"name":"Trip to Prague (2026-08-13)","type":"event","attrs":{"start":"2026-08-13","end":"2026-08-22","location":"Prague"}}}  '
         "a dated occurrence (trip, party, meeting, flight, deadline). Include the start "
         "date in the name so recurring/similar occurrences stay distinct; put ISO dates "
         "in attrs (end optional). Emit edges tying it together: participants "
         "<person> ATTENDS <event>, place <event> LOCATED_IN <location>.\n"
-        '{"edge":{"source":"X","target":"Y","relation":"UPPER_SNAKE"}}  a relationship '
-        "between two named entities (e.g. WORKS_FOR, CONTACT_AT, CLIENT_OF, OWES, ABOUT).\n"
+        '{"edge":{"source":"X","target":"Y","relation":"..."}}  a relationship between '
+        "two named entities. relation MUST be one of exactly these:\n"
+        "LOCATED_IN, LIVES_IN, TRAVELS_TO, WORKS_FOR, LEADS, FOUNDED, OWNS, PART_OF, "
+        "MEMBER_OF, AFFILIATED_WITH, APPLIED_TO, HIRING, POSTED_ON, CONTACT_AT, "
+        "CLIENT_OF, VENDOR_OF, PARTNER_OF, PROSPECT, CONTACTED, OWES, OFFERS, "
+        "REFERRAL_FROM, IN_INDUSTRY, TARGETS, HAS_PROJECT, USES, SPOUSE_OF, PARENT_OF, "
+        "ATTENDS, ABOUT, INVOLVES, INTERESTED_IN, RELATED_TO.\n"
+        "The subject acts: <person> WORKS_FOR <company>, <company> HIRING <job>, "
+        "<person> APPLIED_TO <job>, <company> OFFERS <service>, <company> LOCATED_IN "
+        "<place>, <job> POSTED_ON <platform>. NEVER emit passive/inverse forms "
+        "(OFFERED_BY, POSTED_BY, LED_BY, FOUNDED_BY, ROLE_AT), swap source/target "
+        "instead. If no relation fits, use RELATED_TO. Salary, dates, and deadlines are "
+        "node attrs, not edges.\n"
         "SKIP greetings, signatures, marketing, legal boilerplate, tracking numbers, and "
         "ephemera. If nothing is worth remembering, output nothing. At most 8 facts, "
         "12 nodes, 12 edges."
@@ -140,13 +151,13 @@ def extract(text: str, source: str, meta: dict) -> dict:
     return {"facts": facts, "nodes": nodes, "edges": edges}
 
 
-def _append_overlay(nodes: list, edges: list) -> None:
+def _append_overlay(nodes: list, edges: list, source_ref: str = "") -> None:
     """Write canonicalized nodes/edges straight into the unified store (memstore).
     Same-entity variants collapse to one node via entity_resolve; the graph is
     maintained incrementally, no overlay JSON, no periodic rebuild."""
     try:
         import memstore as _ms
-        from entity_resolve import Resolver, normalize_relation as _nr
+        from entity_resolve import Resolver, canon_relation as _cr
         con = _ms.connect()
         _ms.init_schema(con)
         rz = Resolver()
@@ -167,7 +178,8 @@ def _append_overlay(nodes: list, edges: list) -> None:
         if not isinstance(n, dict):
             continue
         ntype = n.get("type", "concept")
-        ht = ntype if ntype in ("person", "company", "project", "location", "idea", "event") else None
+        ht = ntype if ntype in ("person", "company", "project", "location",
+                                "job", "document", "idea", "event") else None
         nm = _canon(n.get("name"), ht)
         if not nm:
             continue
@@ -181,9 +193,16 @@ def _append_overlay(nodes: list, edges: list) -> None:
             continue
         s = _canon(e.get("source"))
         t = _canon(e.get("target"))
-        rel = _nr(e.get("relation"))
+        raw_rel = str(e.get("relation") or "").strip()
+        rel, flipped = _cr(raw_rel)
+        if flipped:
+            s, t = t, s
+        # Keep the extractor's original wording only when the canonizer had
+        # to change it, a non-empty rel_orig is the drift signal.
+        changed = flipped or rel != raw_rel.upper().replace(" ", "_")
         if s and t and s != t:
-            _ms.add_edge(con, s, rel, t, "ingest")
+            _ms.add_edge(con, s, rel, t, "ingest", source_ref=source_ref,
+                         rel_orig=raw_rel[:60] if changed else "")
 
     # Close-call fuzzy matches (blend evidence): entities that ALMOST merged
     # get a reviewable POSSIBLE_ALIAS edge instead of a silent decision.
@@ -200,6 +219,28 @@ def _append_overlay(nodes: list, edges: list) -> None:
         pass
     con.commit()
     con.close()
+
+
+def _set_fact_provenance(fact_ids: list, source_ref: str) -> None:
+    """Stamp source_ref on facts without touching upstream store.py.
+    The empty-guard keeps first-assertion semantics: a duplicate fact
+    returned by add_fact keeps the provenance of the document that first
+    asserted it."""
+    ids = [int(i) for i in fact_ids if i]
+    if not ids or not source_ref:
+        return
+    try:
+        import sqlite3
+        con = sqlite3.connect(str(HERMES_HOME / "memory_store.db"), timeout=30)
+        con.execute("PRAGMA busy_timeout=30000")
+        con.executemany(
+            "UPDATE facts SET source_ref=? WHERE fact_id=? "
+            "AND (source_ref IS NULL OR source_ref='')",
+            [(source_ref, i) for i in ids])
+        con.commit()
+        con.close()
+    except Exception as e:
+        print(f"  [warn] provenance stamp failed: {e}", file=sys.stderr)
 
 
 _STORE = None
@@ -225,6 +266,7 @@ def ingest_document(doc: dict, ledger: set) -> dict:
         ledger.add(did)
         return {}
 
+    source_ref = f"{source}:{did}"[:200]
     ex = extract(text, source, meta)
     facts, nodes, edges = ex["facts"], ex["nodes"], ex["edges"]
     if facts:
@@ -232,13 +274,15 @@ def ingest_document(doc: dict, ledger: set) -> dict:
         tagbits = [source] + [f"{k}:{v}" for k, v in meta.items()
                               if k in ("from", "sender", "number", "direction") and v]
         tags = ",".join(tagbits)[:120]
+        new_ids = []
         for f in facts:
             try:
-                st.add_fact(f, category=source, tags=tags)
+                new_ids.append(st.add_fact(f, category=source, tags=tags))
             except Exception as e:
                 print(f"  [warn] add_fact failed: {e}", file=sys.stderr)
+        _set_fact_provenance(new_ids, source_ref)
     if nodes or edges:
-        _append_overlay(nodes, edges)
+        _append_overlay(nodes, edges, source_ref=source_ref)
     ledger.add(did)
     return ex
 

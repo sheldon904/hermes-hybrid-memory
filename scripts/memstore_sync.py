@@ -158,6 +158,46 @@ def extract_gists_for_new_facts(con, batch=25):
     return done
 
 
+def sync_entity_types(con):
+    """Copy graph_nodes.type onto untyped fact-layer entities (Phase 2,
+    2026-07-06). The holographic store's regex extractor leaves every
+    entities.entity_type at 'unknown'; the graph layer knows types from LLM
+    ingestion. Reconcile via the same entity_resolve canonicalization that
+    ingest uses, so aliases land on the same node. Idempotent: only rows
+    still 'unknown' are touched; entities with no graph counterpart
+    legitimately stay 'unknown'."""
+    rows = con.execute(
+        "SELECT entity_id, name FROM entities "
+        "WHERE entity_type='unknown' OR entity_type IS NULL OR entity_type=''").fetchall()
+    if not rows:
+        return 0
+    node_types = {str(name).lower(): t for name, t in con.execute(
+        "SELECT name, type FROM graph_nodes "
+        "WHERE type IS NOT NULL AND type NOT IN ('', 'concept')")}
+    rz = None
+    try:
+        from entity_resolve import Resolver
+        rz = Resolver()  # read-only use: .save() is never called
+    except Exception as e:
+        print(f"  [warn] entity typing: resolver unavailable ({e})", file=sys.stderr)
+    typed = 0
+    for eid, name in rows:
+        if not name:
+            continue
+        canon = ""
+        if rz is not None:
+            try:
+                canon = rz.canonical(name) or ""
+            except Exception:
+                canon = ""
+        t = node_types.get(canon.lower()) or node_types.get(str(name).lower())
+        if t:
+            con.execute("UPDATE entities SET entity_type=? WHERE entity_id=?", (t, eid))
+            typed += 1
+    con.commit()
+    return typed
+
+
 def main():
     con = ms.connect()
     ms.init_schema(con)
@@ -241,9 +281,10 @@ def main():
     con.commit()
     edged = extract_edges_for_new_facts(con)
     gisted = extract_gists_for_new_facts(con)
+    etyped = sync_entity_types(con)
     st = ms.stats(con)
     print(f"memstore_sync: +{added} vectors, -{pruned} pruned, edges-mined-from {edged} facts, "
-          f"gists {gisted} | total {st['vectors']} vectors, {st['edges']} edges")
+          f"gists {gisted}, entity-types +{etyped} | total {st['vectors']} vectors, {st['edges']} edges")
     con.close()
 
 

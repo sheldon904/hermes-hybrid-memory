@@ -54,6 +54,14 @@ def connect(db_path=None):
     return con
 
 
+def _ensure_column(con, table, column, decl):
+    """Idempotent ALTER guard so pre-existing databases converge with the
+    CREATE TABLE definition above (SQLite won't alter on IF NOT EXISTS)."""
+    cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_schema(con):
     con.execute("CREATE TABLE IF NOT EXISTS vec_items ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, vid TEXT UNIQUE, "
@@ -61,8 +69,11 @@ def init_schema(con):
     con.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_index USING vec0("
                 f"item_id INTEGER PRIMARY KEY, embedding float[{DIM}] distance_metric=cosine)")
     con.execute("CREATE TABLE IF NOT EXISTS edges ("
-                "src TEXT, rel TEXT, dst TEXT, src_tag TEXT, "
+                "src TEXT, rel TEXT, dst TEXT, src_tag TEXT, source_ref TEXT DEFAULT '', "
+                "rel_orig TEXT DEFAULT '', "
                 "PRIMARY KEY(src, rel, dst))")
+    _ensure_column(con, "edges", "source_ref", "TEXT DEFAULT ''")
+    _ensure_column(con, "edges", "rel_orig", "TEXT DEFAULT ''")
     con.execute("CREATE TABLE IF NOT EXISTS graph_nodes ("
                 "name TEXT PRIMARY KEY, type TEXT, attrs TEXT)")
     # Watermark of facts already mined for graph edges (so extraction is incremental).
@@ -91,6 +102,24 @@ def init_schema(con):
     con.execute("CREATE TABLE IF NOT EXISTS chunk_members ("
                 "chunk_fact_id INTEGER, member_fact_id INTEGER, "
                 "PRIMARY KEY(chunk_fact_id, member_fact_id))")
+    # Decision traces (Phase 3, 2026-07-06): what Hermes recommended vs what
+    # the user chose. Written by the hybrid provider's decision_log tool;
+    # resolved rows replace the token-overlap engagement proxy in
+    # memory_feedback.py; pending rows age to 'ignored' after 7 days.
+    con.execute("CREATE TABLE IF NOT EXISTS decision_log ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "session_id TEXT, turn_number INTEGER, "
+                "kind TEXT, "              # recommendation | option-set | proposal
+                "proposal TEXT, "          # what Hermes recommended (one line)
+                "options_shown TEXT, "     # JSON array of alternatives presented
+                "chosen TEXT, "            # what the user went with
+                "outcome TEXT DEFAULT 'pending', "  # accepted|rejected|modified|ignored|pending
+                "reason TEXT, "            # user's stated reason, if any
+                "source_refs TEXT, "       # JSON: recall_log fact_ids/vids from that turn
+                "trust_applied INTEGER DEFAULT 0)")  # memory_feedback applied this decision
+    con.execute("CREATE INDEX IF NOT EXISTS idx_decision_outcome ON decision_log(outcome)")
+    _ensure_column(con, "decision_log", "trust_applied", "INTEGER DEFAULT 0")
     con.commit()
 
 
@@ -173,19 +202,86 @@ def add_node(con, name, ntype="concept", attrs=None):
             (name, ntype, "{}"))
 
 
-def add_edge(con, src, rel, dst, src_tag="ingest"):
+def add_edge(con, src, rel, dst, src_tag="ingest", source_ref="", rel_orig=""):
+    """source_ref points at the document that first asserted this edge
+    (e.g. 'email:<message-id>', 'gcal:<eventId>'). rel_orig preserves the
+    extractor's raw relation string when the canonizer changed it (drift
+    observability). INSERT OR IGNORE means first-assertion provenance:
+    later duplicates don't overwrite either."""
     if not src or not dst or src == dst:
         return
-    con.execute("INSERT OR IGNORE INTO edges(src, rel, dst, src_tag) VALUES (?,?,?,?)",
-                (src, rel, dst, src_tag))
+    con.execute("INSERT OR IGNORE INTO edges(src, rel, dst, src_tag, source_ref, rel_orig) "
+                "VALUES (?,?,?,?,?,?)",
+                (src, rel, dst, src_tag, source_ref or "", rel_orig or ""))
+
+
+def merge_nodes(con, loser, winner):
+    """Fold node `loser` into `winner` (approved alias): re-point every edge,
+    drop duplicates/self-edges, merge attrs (winner's keys win; adopt loser's
+    type if winner's is generic), delete the loser node and any POSSIBLE_ALIAS
+    edge between the pair. Returns {'moved': n, 'dropped': n}."""
+    if not loser or not winner or loser == winner:
+        return {"moved": 0, "dropped": 0}
+    try:
+        con.execute(
+            "DELETE FROM edges WHERE rel='POSSIBLE_ALIAS' AND "
+            "((src=? AND dst=?) OR (src=? AND dst=?))",
+            (loser, winner, winner, loser))
+        before = con.execute(
+            "SELECT COUNT(*) FROM edges WHERE src=? OR dst=?", (loser, loser)).fetchone()[0]
+        # UPDATE OR IGNORE keeps the existing canonical row on PK collision
+        # (first-assertion provenance); leftovers are the collided duplicates.
+        con.execute("UPDATE OR IGNORE edges SET src=? WHERE src=?", (winner, loser))
+        con.execute("UPDATE OR IGNORE edges SET dst=? WHERE dst=?", (winner, loser))
+        dropped = con.execute(
+            "SELECT COUNT(*) FROM edges WHERE src=? OR dst=?", (loser, loser)).fetchone()[0]
+        con.execute("DELETE FROM edges WHERE src=? OR dst=?", (loser, loser))
+        con.execute("DELETE FROM edges WHERE src=dst")
+        lrow = con.execute(
+            "SELECT type, attrs FROM graph_nodes WHERE name=?", (loser,)).fetchone()
+        wrow = con.execute(
+            "SELECT type, attrs FROM graph_nodes WHERE name=?", (winner,)).fetchone()
+        if lrow:
+            def _attrs(raw):
+                try:
+                    a = json.loads(raw) if raw else {}
+                    return a if isinstance(a, dict) else {}
+                except Exception:
+                    return {}
+            merged = {**_attrs(lrow[1]), **(_attrs(wrow[1]) if wrow else {})}
+            wtype = (wrow[0] if wrow else None) or "concept"
+            if wtype == "concept" and lrow[0] and lrow[0] != "concept":
+                wtype = lrow[0]
+            con.execute(
+                "INSERT INTO graph_nodes(name, type, attrs) VALUES (?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET type=excluded.type, attrs=excluded.attrs",
+                (winner, wtype, json.dumps(merged, ensure_ascii=False)))
+            con.execute("DELETE FROM graph_nodes WHERE name=?", (loser,))
+        con.commit()
+        return {"moved": before - dropped, "dropped": dropped}
+    except Exception:
+        con.rollback()
+        raise
 
 
 def remove_edges_by_tag(con, src_tag):
+    """Bulk delete by provenance tag. FOOTGUN: src_tag='rejected' rows are the
+    durable record of operator rejections (their PK suppresses re-proposal),
+    deleting them makes every rejected alias/category proposal come back."""
     con.execute("DELETE FROM edges WHERE src_tag=?", (src_tag,))
 
 
-def load_graph(con):
-    """Build a networkx DiGraph from the edges + graph_nodes tables."""
+DEFAULT_EXCLUDE_TAGS = ("proposed", "rejected", "alias-candidate")
+
+
+def load_graph(con, exclude_tags=DEFAULT_EXCLUDE_TAGS):
+    """Build a networkx DiGraph from the edges + graph_nodes tables.
+
+    By default, PENDING/REJECTED PROPOSAL edges are excluded so unreviewed
+    machine suggestions (POSSIBLE_ALIAS, proposed INSTANCE_OF) never surface
+    to readers as established facts, they leaked into prefetch and the graph
+    tools before 2026-07-06. Pass exclude_tags=None for the full graph
+    (review tooling uses direct SQL instead)."""
     import networkx as nx
     G = nx.DiGraph()
     for name, ntype, attrs in con.execute("SELECT name, type, attrs FROM graph_nodes"):
@@ -196,12 +292,20 @@ def load_graph(con):
             a = {}
         G.add_node(name, node_type=ntype or "concept",
                    **{k: v for k, v in a.items() if isinstance(v, (str, int, float, bool))})
-    for src, rel, dst, tag in con.execute("SELECT src, rel, dst, src_tag FROM edges"):
+    where, params = "", []
+    if exclude_tags:
+        qmarks = ",".join("?" * len(exclude_tags))
+        # rel guard is belt-and-suspenders vs mistagged alias edges
+        where = (f"WHERE (src_tag IS NULL OR src_tag NOT IN ({qmarks})) "
+                 "AND rel != 'POSSIBLE_ALIAS'")
+        params = list(exclude_tags)
+    for src, rel, dst, tag, ref in con.execute(
+            f"SELECT src, rel, dst, src_tag, source_ref FROM edges {where}", params):
         if not G.has_node(src):
             G.add_node(src, node_type="concept")
         if not G.has_node(dst):
             G.add_node(dst, node_type="concept")
-        G.add_edge(src, dst, relation=rel, source=tag)
+        G.add_edge(src, dst, relation=rel, source=tag, source_ref=ref or "")
     return G
 
 

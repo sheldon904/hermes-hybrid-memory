@@ -157,6 +157,8 @@ def main():
     for fid, reason in list(to_archive.items())[:15]:
         print(f"    #{fid} [{reason}] {(rowmap[fid]['content'] or '')[:60]!r}")
 
+    decision_report(con)
+
     if not apply:
         print("\nDRY RUN, nothing changed. Re-run with --apply to archive.")
         return
@@ -192,6 +194,36 @@ def main():
     print(f"\nArchived+removed {removed} facts -> {ARCHIVE}")
     print(f"facts now: {nf} | FTS integrity: {fts_note}")
     print("(memory-ingest cron prunes these from the vector index within 15m)")
+
+
+def decision_report(con):
+    """Weekly decision-trace summary (Phase 3, 2026-07-06): acceptance rate by
+    kind plus recent rejections, the "decision context" panel at personal-agent
+    scale. Read-only."""
+    try:
+        rows = con.execute(
+            "SELECT kind, outcome, COUNT(*) FROM decision_log "
+            "WHERE ts >= datetime('now', '-90 days') GROUP BY kind, outcome").fetchall()
+    except sqlite3.OperationalError:
+        return
+    if not rows:
+        return
+    by_kind = {}
+    for kind, outcome, n in rows:
+        by_kind.setdefault(kind or "recommendation", {})[outcome] = n
+    print("\nDecision traces (90d):")
+    for kind, oc in sorted(by_kind.items()):
+        resolved = sum(v for k, v in oc.items() if k in ("accepted", "rejected", "modified"))
+        acc = oc.get("accepted", 0) + oc.get("modified", 0)
+        rate = f"{100 * acc / resolved:.0f}%" if resolved else "n/a"
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(oc.items()))
+        print(f"  {kind}: acceptance {rate} ({detail})")
+    rej = con.execute(
+        "SELECT ts, proposal, reason FROM decision_log WHERE outcome='rejected' "
+        "AND ts >= datetime('now', '-90 days') ORDER BY id DESC LIMIT 5").fetchall()
+    for ts, proposal, reason in rej:
+        why = f" - {reason}" if reason else ""
+        print(f"  rejected {str(ts)[:10]}: {(proposal or '')[:70]}{why}")
 
 
 if __name__ == "__main__":
