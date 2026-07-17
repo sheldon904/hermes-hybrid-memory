@@ -23,6 +23,13 @@ memory with a unified store combining **structured facts**, **semantic vector
 recall**, and a **knowledge graph**, plus a set of Hofstadter-inspired
 mechanisms (analogy-making, chunking, emergent categories) layered on top.
 
+For an independent, data-backed look at how this behaves in production, see
+[**Hybrid Holographic Memory in a Production Personal Agent**](docs/hermes-hybrid-memory-study.pdf),
+a seventeen-day empirical characterization covering store composition and
+growth, recall-channel telemetry (1,976 events / 235 sessions), a 200-query
+known-item retrieval probe, a full replay of every analogy-slot firing, and
+latency microbenchmarks, measured read-only against a live instance.
+
 This repo is a staged extraction of a system that has been running in
 production against a real personal/work agent for several weeks. Some paths
 still assume the `$HERMES_HOME` layout it grew up in; see [Status](#status)
@@ -212,6 +219,9 @@ scripts/                 the standalone pipeline scripts (run via cron,
 docs/
   ARCHITECTURE.md           deep technical dive: data flow, config, internals
   DESIGN-NOTES.md           the Hofstadter framing: why analogy/chunking/categories
+  hermes-hybrid-memory-study.pdf
+                            17-day empirical characterization: telemetry, retrieval
+                            benchmarks, analogy-slot replay, latency, on live data
 patches/
   cron-memory-opt-in.diff   the one local patch against hermes-agent itself
                              (see Status below)
