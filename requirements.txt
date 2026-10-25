@@ -3,7 +3,7 @@
 # hermes-agent checkout, which supplies the holographic base provider and its
 # HRR math. See README "Status" for what that coupling means.
 
-sqlite-vec>=0.1.1     # unified vector index (virtual table, cosine, 384-dim)
+sqlite-vec>=0.1.3     # unified vector index (virtual table, cosine, 384-dim)
 networkx>=3.0         # in-memory knowledge graph (load-on-demand DiGraph)
 numpy>=1.24           # HRR phase-vector math for the analogy slot
 PyYAML>=6.0           # config.yaml parsing
