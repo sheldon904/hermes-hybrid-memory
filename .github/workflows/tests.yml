@@ -38,8 +38,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Minimal runtime deps, chromadb (embedder) is intentionally omitted:
-          # the suite uses throwaway SQLite fixtures and never calls the model.
+          # Minimal runtime deps. The embedder deps (onnxruntime, tokenizers)
+          # are intentionally omitted: the suite uses throwaway SQLite fixtures
+          # and never calls the model.
           pip install sqlite-vec networkx numpy PyYAML pytest
 
       - name: Run tests

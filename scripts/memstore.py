@@ -11,10 +11,12 @@ fact_entities/FTS). Writes are incremental and transactional; there is no
 periodic full rebuild. networkx is loaded from the edges table on demand for
 path/reason queries.
 
-Embedder: ChromaDB's ONNX all-MiniLM-L6-v2 function (the model only, the
-ChromaDB *store* is retired). 384-dim.
+Embedder: all-MiniLM-L6-v2 (ONNX, 384-dim) run directly on onnxruntime +
+tokenizers. It reproduces the chromadb embedding function this module used
+before, so vectors already in vec_index stay valid without chromadb installed.
 """
 
+import hashlib
 import json
 import os
 import struct
@@ -24,14 +26,103 @@ HERMES_HOME = Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")
 DB_PATH = HERMES_HOME / "memory_store.db"
 DIM = 384
 
+# -- embedder ----------------------------------------------------------------
+# Same steps as chromadb's ONNXMiniLM_L6_V2 (chromadb 1.5.9): the same pinned
+# archive and cache dir, 256-token truncation and padding, mask-weighted mean
+# pooling, then L2 normalization. A machine that already holds Chroma's cached
+# copy of the model reuses it and downloads nothing.
+
+MODEL_DIR = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
+MODEL_URL = "https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
+MODEL_SHA256 = "913d7300ceae3b2dbc2c50d1de4baacab4be7b9380491c27fab7418616a16ec3"
+MAX_TOKENS = 256
+_MODEL_FILES = ("config.json", "model.onnx", "special_tokens_map.json",
+                "tokenizer_config.json", "tokenizer.json", "vocab.txt")
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _fetch_model(model_dir=None):
+    """Return the extracted model dir. If a model file is missing, download the
+    archive, check it against MODEL_SHA256, and only then extract it."""
+    model_dir = Path(model_dir or MODEL_DIR)
+    onnx_dir = model_dir / "onnx"
+    if all((onnx_dir / f).exists() for f in _MODEL_FILES):
+        return onnx_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
+    archive = model_dir / "onnx.tar.gz"
+    if not archive.exists() or _sha256(archive) != MODEL_SHA256:
+        import shutil
+        import urllib.request
+        part = model_dir / f"onnx.tar.gz.{os.getpid()}.part"
+        try:
+            with urllib.request.urlopen(MODEL_URL, timeout=120) as resp:
+                with open(part, "wb") as out:
+                    shutil.copyfileobj(resp, out, 1 << 20)
+            if _sha256(part) != MODEL_SHA256:
+                raise ValueError(f"{MODEL_URL} failed the SHA256 check; refusing to use it")
+            os.replace(part, archive)
+        finally:
+            if part.exists():
+                part.unlink()
+    import tarfile
+    with tarfile.open(archive, "r:gz") as tar:
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(model_dir, filter="data")
+        else:  # Python < 3.11.4; the archive is SHA256-pinned above
+            tar.extractall(model_dir)
+    return onnx_dir
+
+
+class MiniLMEmbedder:
+    """Callable: list of str -> list of 384-dim float32 numpy vectors."""
+
+    def __init__(self, model_dir=None):
+        import onnxruntime as ort
+        from tokenizers import Tokenizer
+        onnx_dir = _fetch_model(model_dir)
+        self._tok = Tokenizer.from_file(str(onnx_dir / "tokenizer.json"))
+        self._tok.enable_truncation(max_length=MAX_TOKENS)
+        self._tok.enable_padding(pad_id=0, pad_token="[PAD]", length=MAX_TOKENS)
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # Provider choice as in Chroma: every available provider except CoreML.
+        providers = [p for p in ort.get_available_providers()
+                     if p != "CoreMLExecutionProvider"]
+        self._session = ort.InferenceSession(str(onnx_dir / "model.onnx"),
+                                             sess_options=so, providers=providers)
+
+    def __call__(self, texts, batch_size=32):
+        import numpy as np
+        out = []
+        for i in range(0, len(texts), batch_size):
+            enc = [self._tok.encode(t) for t in texts[i:i + batch_size]]
+            ids = np.array([e.ids for e in enc], dtype=np.int64)
+            mask = np.array([e.attention_mask for e in enc], dtype=np.int64)
+            hidden = self._session.run(None, {"input_ids": ids, "attention_mask": mask,
+                                              "token_type_ids": np.zeros_like(ids)})[0]
+            m = np.broadcast_to(mask[..., None], hidden.shape)
+            pooled = (hidden * m).sum(1) / np.clip(m.sum(1), 1e-9, None)
+            norm = np.linalg.norm(pooled, axis=1)
+            norm[norm == 0] = 1e-12
+            out.extend((pooled / norm[:, None]).astype(np.float32))
+        return out
+
+
 _EF = None
 
 
 def _ef():
     global _EF
     if _EF is None:
-        from chromadb.utils import embedding_functions as ef
-        _EF = ef.DefaultEmbeddingFunction()  # ONNX all-MiniLM-L6-v2
+        _EF = MiniLMEmbedder()
     return _EF
 
 

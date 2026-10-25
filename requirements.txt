@@ -5,10 +5,16 @@
 
 sqlite-vec>=0.1.3     # unified vector index (virtual table, cosine, 384-dim)
 networkx>=3.0         # in-memory knowledge graph (load-on-demand DiGraph)
-numpy>=1.24           # HRR phase-vector math for the analogy slot
+numpy>=1.24           # HRR phase-vector math; embedder pooling
 PyYAML>=6.0           # config.yaml parsing
-chromadb>=0.4         # ONLY for its bundled ONNX all-MiniLM-L6-v2 embedder;
-                      # the ChromaDB store itself is not used
+onnxruntime>=1.27.0   # runs the all-MiniLM-L6-v2 ONNX embedder (memstore.py)
+tokenizers>=0.22.2    # loads that model's tokenizer.json
+
+# Transitive floors (tokenizers -> huggingface-hub -> httpx2). Older httpx2 and
+# httpcore2 releases carry HIGH advisories GHSA-7mj9-2mp8-4m2p and
+# GHSA-8xx6-hgc6-gc2m.
+httpx2>=2.12.0
+httpcore2>=2.12.0
 
 # Dev / test only:
 #   pytest>=7.0
