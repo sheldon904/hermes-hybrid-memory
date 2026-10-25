@@ -266,9 +266,12 @@ This is a staged extraction, not yet a standalone package:
 
 ## Dependencies
 
-`sqlite-vec`, `networkx`, `numpy`, `PyYAML`, and `chromadb` (only for its
-bundled ONNX `all-MiniLM-L6-v2` embedding function; the ChromaDB *store*
-itself is not used). An `OPENROUTER_API_KEY` env var (or `.env` entry) is
+`sqlite-vec`, `networkx`, `numpy`, `PyYAML`, `onnxruntime` and `tokenizers`.
+The last two run the ONNX `all-MiniLM-L6-v2` embedder in `scripts/memstore.py`.
+On first use it downloads the model into Chroma's cache dir
+(`~/.cache/chroma/onnx_models/`) and checks its SHA256. Installs that ran the
+older chromadb-based embedder reuse that copy and keep their stored vectors.
+An `OPENROUTER_API_KEY` env var (or `.env` entry) is
 required for the LLM-backed steps (ingest distillation, gisting, chunk
 summarization, category naming, graph reasoning); everything else degrades
 gracefully without it.
